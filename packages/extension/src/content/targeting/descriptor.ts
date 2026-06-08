@@ -191,7 +191,7 @@ function quadrant(rect: DOMRect): string {
   return `${vertical}-${horizontal}`;
 }
 
-function fingerprint(el: Element): string {
+export function fingerprint(el: Element): string {
   return [
     el.tagName.toLowerCase(),
     el.getAttribute('id') ?? '',

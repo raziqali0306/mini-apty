@@ -1,11 +1,12 @@
 import { initAffordance, arm, disarm } from './overlay/affordance';
+import { initPlayer, startPlayerFromStorage, stopPlayer } from './player';
 import type { ContentCommand } from '../shared/messages';
 import type { DraftStep } from './targeting/types';
 
 /**
  * Content script — owns DOM access for this tab. It hosts the author capture
- * overlay inside a closed Shadow DOM so host-page CSS/z-index/event handlers
- * cannot break (or be broken by) our UI. The player overlay attaches here later.
+ * overlay and the player balloon inside a closed Shadow DOM so host-page
+ * CSS/z-index/event handlers cannot break (or be broken by) our UI.
  */
 
 const OVERLAY_HOST_ID = 'mini-apty-overlay-root';
@@ -15,7 +16,7 @@ function mountOverlayHost(): ShadowRoot | null {
 
   const host = document.createElement('div');
   host.id = OVERLAY_HOST_ID;
-  // Zero-footprint, top-most, non-interactive container; children opt back in.
+  // Zero-footprint, top-most container; children opt back into pointer events.
   host.style.cssText = [
     'position:fixed',
     'top:0',
@@ -37,11 +38,27 @@ if (shadowRoot) {
   initAffordance(shadowRoot, (step: DraftStep) => {
     void chrome.runtime.sendMessage({ type: 'author.captured', step });
   });
+  initPlayer(shadowRoot);
 
-  // Arm/disarm commands relayed from the service worker.
+  // Resume an in-progress walkthrough after a refresh / navigation back.
+  void startPlayerFromStorage();
+
+  // Commands relayed from the service worker.
   chrome.runtime.onMessage.addListener((message: unknown) => {
     const command = message as ContentCommand;
-    if (command.type === 'author.arm') arm();
-    else if (command.type === 'author.disarm') disarm();
+    switch (command.type) {
+      case 'author.arm':
+        arm();
+        break;
+      case 'author.disarm':
+        disarm();
+        break;
+      case 'player.start':
+        void startPlayerFromStorage();
+        break;
+      case 'player.stop':
+        stopPlayer();
+        break;
+    }
   });
 }

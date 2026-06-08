@@ -12,6 +12,12 @@ import {
   type WorkerEvent,
 } from '../shared/messages';
 import { toPattern } from '../lib/path-pattern';
+import {
+  playerKey,
+  walkthroughKey,
+  type PlayerSession,
+  type PlayerWalkthrough,
+} from '../shared/player';
 
 /**
  * MV3 service worker — the single broker for network + JWT and the relay between
@@ -123,6 +129,8 @@ async function route(req: IncomingRequest): Promise<unknown> {
       return saveWalkthrough(req.payload as SaveWalkthroughInput | undefined);
     case 'walkthrough.list':
       return listWalkthroughs();
+    case 'walkthrough.play':
+      return playWalkthrough(req.payload as { id: string } | undefined);
     default:
       throw new ApiCallError({ kind: 'unknown', message: 'Unknown request' });
   }
@@ -229,6 +237,57 @@ async function listWalkthroughs(): Promise<WalkthroughListResult> {
       stepCount: Array.isArray(w.steps) ? w.steps.length : 0,
     })),
   };
+}
+
+/**
+ * Load a walkthrough, cache it for offline, seed/resume the player session for
+ * the active tab's origin, and tell the content script to start. The CS reads
+ * the session from storage (so a later refresh resumes without us).
+ */
+async function playWalkthrough(input: { id: string } | undefined): Promise<{ ok: true }> {
+  if (!input?.id) throw new ApiCallError({ kind: 'validation', message: 'No walkthrough selected' });
+  const tab = await activeTab();
+  const origin = httpOrigin(tab?.url);
+  if (tab?.id === undefined || !origin) {
+    throw new ApiCallError({ kind: 'unknown', message: "Open the walkthrough's site in a tab first" });
+  }
+
+  let walkthrough: PlayerWalkthrough;
+  try {
+    walkthrough = await apiFetch<PlayerWalkthrough>(
+      `/walkthroughs/${input.id}`,
+      { method: 'GET' },
+      { auth: true },
+    );
+  } catch (err) {
+    // Degrade gracefully: play a previously-cached copy if the backend is down.
+    const cached = await getCachedWalkthrough(input.id);
+    if (!cached) throw err;
+    walkthrough = cached;
+  }
+
+  await chrome.storage.local.set({ [walkthroughKey(walkthrough.id)]: walkthrough });
+
+  const existing = await getSession(origin.origin);
+  const stepIndex = existing?.id === walkthrough.id ? existing.stepIndex : 0;
+  await chrome.storage.local.set({
+    [playerKey(origin.origin)]: { id: walkthrough.id, stepIndex } satisfies PlayerSession,
+  });
+
+  await chrome.tabs.sendMessage(tab.id, { type: 'player.start' });
+  return { ok: true };
+}
+
+async function getCachedWalkthrough(id: string): Promise<PlayerWalkthrough | undefined> {
+  const key = walkthroughKey(id);
+  const result = await chrome.storage.local.get(key);
+  return result[key] as PlayerWalkthrough | undefined;
+}
+
+async function getSession(origin: string): Promise<PlayerSession | undefined> {
+  const key = playerKey(origin);
+  const result = await chrome.storage.local.get(key);
+  return result[key] as PlayerSession | undefined;
 }
 
 /** Parse an http(s) tab URL into origin + path, or undefined for other schemes. */

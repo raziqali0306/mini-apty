@@ -88,6 +88,7 @@ export interface RpcPayloadMap {
   'author.stop': undefined;
   'walkthrough.save': SaveWalkthroughInput;
   'walkthrough.list': undefined;
+  'walkthrough.play': { id: string };
 }
 
 /** Success results, keyed by RPC type. */
@@ -102,6 +103,7 @@ export interface RpcResultMap {
   'author.stop': { ok: true };
   'walkthrough.save': { walkthrough: SavedWalkthrough };
   'walkthrough.list': WalkthroughListResult;
+  'walkthrough.play': { ok: true };
 }
 
 export type RpcType = keyof RpcResultMap;
@@ -114,7 +116,11 @@ export type WorkerEvent =
 // ── Content-script ↔ worker (one-shot runtime messages, not the Port) ────────
 
 /** Worker → content script (via chrome.tabs.sendMessage). */
-export type ContentCommand = { type: 'author.arm' } | { type: 'author.disarm' };
+export type ContentCommand =
+  | { type: 'author.arm' }
+  | { type: 'author.disarm' }
+  | { type: 'player.start' }
+  | { type: 'player.stop' };
 
 /** Content script → worker (via chrome.runtime.sendMessage). */
 export type ContentEvent = { type: 'author.captured'; step: DraftStep };

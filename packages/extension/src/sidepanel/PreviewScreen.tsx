@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import { useWalkthroughList } from '../hooks/use-walkthrough-list';
+import { portClient } from '../lib/port-client';
 import type { ApiError } from '../shared/messages';
 
 function errorMessage(error: ApiError): string {
@@ -12,9 +14,24 @@ function errorMessage(error: ApiError): string {
   }
 }
 
-/** Preview mode — lists the current site's saved walkthroughs from the backend. */
+/** Preview mode — lists the current site's saved walkthroughs and plays them. */
 export function PreviewScreen(): JSX.Element {
   const { state, reload } = useWalkthroughList();
+  const [notice, setNotice] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const [playingId, setPlayingId] = useState<string | null>(null);
+
+  async function play(id: string): Promise<void> {
+    setNotice(null);
+    setPlayingId(id);
+    try {
+      await portClient.request('walkthrough.play', { id });
+      setNotice({ kind: 'ok', text: 'Started — follow the balloon on the page.' });
+    } catch (err) {
+      setNotice({ kind: 'err', text: errorMessage(err as ApiError) });
+    } finally {
+      setPlayingId(null);
+    }
+  }
 
   if (state.status === 'loading') {
     return <p className="py-8 text-center text-sm text-slate-500">Loading walkthroughs…</p>;
@@ -60,6 +77,16 @@ export function PreviewScreen(): JSX.Element {
         </button>
       </div>
 
+      {notice && (
+        <div
+          className={`rounded-md px-3 py-2 text-sm ${
+            notice.kind === 'ok' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
+          }`}
+        >
+          {notice.text}
+        </div>
+      )}
+
       {walkthroughs.length === 0 ? (
         <p className="py-6 text-center text-sm text-slate-400">
           No walkthroughs saved for this site yet. Author one to get started.
@@ -67,21 +94,29 @@ export function PreviewScreen(): JSX.Element {
       ) : (
         <ul className="flex flex-col gap-2">
           {walkthroughs.map((wt) => (
-            <li
-              key={wt.id}
-              className="flex items-center justify-between rounded-lg border border-slate-200 bg-white p-3 shadow-sm"
-            >
-              <span className="flex min-w-0 flex-col">
-                <span className="truncate text-sm font-medium text-slate-900">{wt.name}</span>
-                <span className="truncate font-mono text-xs text-slate-500">{wt.pathPattern}</span>
-              </span>
-              <span className="shrink-0 pl-2 text-xs text-slate-400">{wt.stepCount} steps</span>
+            <li key={wt.id}>
+              <button
+                type="button"
+                onClick={() => void play(wt.id)}
+                disabled={playingId === wt.id}
+                className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white p-3 text-left shadow-sm transition hover:border-slate-400 hover:shadow disabled:opacity-60"
+              >
+                <span className="flex min-w-0 flex-col">
+                  <span className="truncate text-sm font-medium text-slate-900">{wt.name}</span>
+                  <span className="truncate font-mono text-xs text-slate-500">{wt.pathPattern}</span>
+                </span>
+                <span className="shrink-0 pl-2 text-xs text-slate-400">
+                  {playingId === wt.id ? 'Starting…' : `${wt.stepCount} steps`}
+                </span>
+              </button>
             </li>
           ))}
         </ul>
       )}
 
-      <p className="pt-1 text-center text-[11px] text-slate-400">Playing a walkthrough is coming next.</p>
+      <p className="pt-1 text-center text-[11px] text-slate-400">
+        Tap a walkthrough to play it on the current page.
+      </p>
     </div>
   );
 }
