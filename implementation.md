@@ -168,3 +168,50 @@ tested end-to-end, before touching walkthroughs.
 ### Next
 Walkthrough layer: `Walkthrough`/`Step` model → Zod schemas → CRUD service/controller/routes
 behind `authenticate`, per-owner authZ (403), list by origin/path → tests.
+
+---
+
+## Entry 4 — Extension login/signup UI (SW-brokered auth) (2026-06-08)
+
+**Goal:** Login + signup screens in the side panel, wired to the auth backend, following the
+architecture where the **service worker is the only network broker**.
+
+### What was built
+- **Typed Port-RPC contract** `shared/messages.ts` — request payloads + result maps keyed by RPC
+  type; normalized `ApiError` (`network|auth|validation|conflict|unknown`).
+- **Service worker** `background/service-worker.ts` — now the broker: handles `auth.signup/login/
+  logout/session` + `ping`, does the `fetch` to `VITE_API_BASE_URL`, **persists `{token,user}` in
+  `chrome.storage.local`** (session survives panel close), and normalizes the backend error
+  envelope into `ApiError`. JWT/credentials never live in the panel.
+- **Panel Port client** `lib/port-client.ts` — one Port, request/response correlation by id,
+  20 s keep-alive ping, lazy reconnect on worker eviction (rejects in-flight requests).
+- **Auth store** `store/use-auth-store.ts` (Zustand) — `loading/anonymous/authenticated`, `init`
+  (restores session), `login/signup/logout`, error state. Side effects isolated from views.
+- **Screens** `sidepanel/AuthScreen.tsx` — login⇄signup toggle, Zod client validation
+  (`schemas/auth.ts`), inline field errors (client + server) and a top banner per error kind;
+  `App.tsx` routes on status (loading→spinner, anonymous→AuthScreen, authed→shell + sign-out).
+- **Error boundary** `components/ErrorBoundary.tsx` wrapping the app in `main.tsx`.
+- `vite.config.ts` `envDir: '../../'` so the root `.env` `VITE_API_BASE_URL` is picked up
+  (fallback `http://localhost:4000`). Removed the superseded `use-worker-port` hook (keep-alive
+  now lives in the Port client).
+
+### Decisions
+- **SW-brokered network (not panel `fetch`)** — matches the plan, centralizes JWT, avoids CORS
+  (host-permission fetch from the worker), and the RPC layer is reusable for walkthrough/player.
+- **Session in `chrome.storage.local`**, read on panel open → survives panel close / worker
+  eviction (the worker stays stateless between events).
+- Error kinds drive the UI: validation→inline fields, network/auth/conflict→banner.
+
+### Verification
+| Check | Result |
+| --- | --- |
+| `pnpm --filter extension typecheck` | ✓ |
+| `pnpm --filter extension build` (host + Alpine container watch) | ✓ SW broker + screens bundle |
+| Backend auth endpoints (Entry 3) | ✓ already verified end-to-end |
+
+**Not yet done:** in-browser click-through (no Chrome in this env). To test: reload the unpacked
+extension (`packages/extension/dist`) in Chrome, open the side panel → signup/login → reload to
+confirm the session persists → sign out. Backend must be up (`docker compose up -d`).
+
+### Next
+Unchanged — walkthrough layer; then the author flow can reuse the Port-RPC + SW broker.
