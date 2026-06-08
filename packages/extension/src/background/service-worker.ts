@@ -8,6 +8,7 @@ import {
   type SaveWalkthroughInput,
   type SavedWalkthrough,
   type SessionUser,
+  type WalkthroughListResult,
   type WorkerEvent,
 } from '../shared/messages';
 import { toPattern } from '../lib/path-pattern';
@@ -120,6 +121,8 @@ async function route(req: IncomingRequest): Promise<unknown> {
       return authorStop();
     case 'walkthrough.save':
       return saveWalkthrough(req.payload as SaveWalkthroughInput | undefined);
+    case 'walkthrough.list':
+      return listWalkthroughs();
     default:
       throw new ApiCallError({ kind: 'unknown', message: 'Unknown request' });
   }
@@ -196,6 +199,48 @@ async function saveWalkthrough(
       version: saved.version,
     },
   };
+}
+
+interface BackendWalkthrough {
+  id: string;
+  name: string;
+  pathPattern: string;
+  steps?: unknown[];
+}
+
+/** List the signed-in user's walkthroughs for the active tab's origin. */
+async function listWalkthroughs(): Promise<WalkthroughListResult> {
+  const tab = await activeTab();
+  const origin = httpOrigin(tab?.url);
+  if (!origin) return { context: null, walkthroughs: [] };
+
+  const list = await apiFetch<BackendWalkthrough[]>(
+    `/walkthroughs?origin=${encodeURIComponent(origin.origin)}`,
+    { method: 'GET' },
+    { auth: true },
+  );
+
+  return {
+    context: { origin: origin.origin, path: origin.path },
+    walkthroughs: list.map((w) => ({
+      id: w.id,
+      name: w.name,
+      pathPattern: w.pathPattern,
+      stepCount: Array.isArray(w.steps) ? w.steps.length : 0,
+    })),
+  };
+}
+
+/** Parse an http(s) tab URL into origin + path, or undefined for other schemes. */
+function httpOrigin(url: string | undefined): { origin: string; path: string } | undefined {
+  if (!url) return undefined;
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return undefined;
+    return { origin: u.origin, path: u.pathname };
+  } catch {
+    return undefined;
+  }
 }
 
 async function activeTab(): Promise<chrome.tabs.Tab | undefined> {

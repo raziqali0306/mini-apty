@@ -60,6 +60,20 @@ export interface SavedWalkthrough {
   version: number;
 }
 
+/** Lightweight row for the Preview list. */
+export interface WalkthroughSummary {
+  id: string;
+  name: string;
+  pathPattern: string;
+  stepCount: number;
+}
+
+export interface WalkthroughListResult {
+  /** Null when the active tab isn't a normal http(s) page. */
+  context: { origin: string; path: string } | null;
+  walkthroughs: WalkthroughSummary[];
+}
+
 // ── Port RPC maps ───────────────────────────────────────────────────────────
 
 /** Request payloads, keyed by RPC type. */
@@ -73,6 +87,7 @@ export interface RpcPayloadMap {
   'author.start': undefined;
   'author.stop': undefined;
   'walkthrough.save': SaveWalkthroughInput;
+  'walkthrough.list': undefined;
 }
 
 /** Success results, keyed by RPC type. */
@@ -86,6 +101,7 @@ export interface RpcResultMap {
   'author.start': { ok: true };
   'author.stop': { ok: true };
   'walkthrough.save': { walkthrough: SavedWalkthrough };
+  'walkthrough.list': WalkthroughListResult;
 }
 
 export type RpcType = keyof RpcResultMap;
