@@ -1,0 +1,49 @@
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  backend:
+    build:
+      context: .
+      dockerfile: packages/backend/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Override host: inside the compose network mongo is reachable by service name.
+      MONGO_URI: mongodb://mongo:27017/mini-apty
+    ports:
+      - "4000:4000"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    volumes:
+      # Live-reload backend source without clobbering the image's node_modules.
+      - ./packages/backend/src:/app/packages/backend/src
+    command: pnpm --filter backend dev
+
+  extension:
+    build:
+      context: .
+      dockerfile: packages/extension/Dockerfile
+    env_file:
+      - .env
+    volumes:
+      # Edit source on the host, rebuild in the container, emit dist/ back to host.
+      - ./packages/extension/src:/app/packages/extension/src
+      - ./packages/extension/dist:/app/packages/extension/dist
+    command: pnpm --filter extension build --watch
+
+volumes:
+  mongo-data:
