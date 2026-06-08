@@ -215,3 +215,53 @@ confirm the session persists → sign out. Backend must be up (`docker compose u
 
 ### Next
 Unchanged — walkthrough layer; then the author flow can reuse the Port-RPC + SW broker.
+
+---
+
+## Entry 5 — Walkthrough API (CRUD + per-owner authZ) (2026-06-09)
+
+**Goal:** Persist walkthroughs per user with the full REST surface from the brief, behind auth,
+with a consistent 401/403/404 distinction.
+
+### What was built
+- **Model** `models/walkthrough.model.ts` — `Walkthrough` (name, origin, pathPattern, owner→User,
+  `version`, `steps[]`, timestamps) + `Step` / `AdvanceTrigger` subdocs (`_id:false`). The
+  **`TargetDescriptor` is stored as an opaque `Mixed`** object (the extension owns its shape).
+  `toJSON` maps `_id`→`id`, stringifies `owner`, strips `__v`. Compound index `{owner,origin}`.
+- **Zod** `schemas/walkthrough.schema.ts` — one body schema for create+PUT (PUT = full replace),
+  steps validated (trigger enum, non-empty target), and a list-query schema (`origin` required,
+  `path` optional).
+- **Service** `services/walkthrough.service.ts` — pure CRUD; `loadOwned()` centralizes authZ
+  (invalid/absent id → 404, non-owner → 403); `list()` filters by `owner+origin` then matches the
+  request `path` against each stored wildcard pattern in-process (`*` → one path segment).
+- **Controller/routes** — thin controllers (Zod parse → service → response), `walkthrough.routes`
+  mounted at `app.use('/walkthroughs', authenticate, walkthroughRouter)` (full `POST/GET/GET:id/
+  PUT/DELETE`).
+- **Tests** `__tests__/walkthrough.test.ts` — 9 cases: create/validation, list by origin, path
+  wildcard match/no-match, no cross-user leak, owner-vs-403, missing/bad-id 404, update version
+  bump, delete→gone.
+
+### Decisions
+- **Non-owner → 403, not 404-hide** — the brief explicitly wants the 401/403 distinction.
+- **In-process path matching** (not a Mongo regex) — per-user/per-origin sets are tiny; keeps
+  the matching rule (and its trade-offs) in one readable place.
+- **PUT = full replace** (+ `version` bump) — predictable REST semantics; opaque `target` keeps
+  the API decoupled from the targeting milestone.
+
+### Gotcha
+- **`tsx watch` missed the `app.ts` change over the macOS Docker bind mount** (Docker Desktop
+  file-watch events are flaky), so the container served stale code and `/walkthroughs` 404'd even
+  though local tests passed. `docker compose restart backend` fixed it. Candidate follow-up:
+  enable polling (`CHOKIDAR_USEPOLLING=true`) on the backend service for reliable hot-reload.
+
+### Verification
+| Check | Result |
+| --- | --- |
+| `pnpm --filter backend typecheck` | ✓ |
+| `pnpm --filter backend test` | ✓ 21/21 (9 walkthrough + 10 auth + 2 health) |
+| End-to-end curl vs container | ✓ create 201/v1, list origin+path wildcard, 200/403/401/404, PUT v2, DELETE 204→404 |
+
+### Next
+Backend REST surface is complete. Extension side: targeting + Shadow-DOM overlay (Step 3), then
+author flow (Step 4) and player flow (Step 5) — reusing the Port-RPC + SW broker and the
+walkthrough endpoints.
