@@ -2,6 +2,7 @@ import express, { type Express } from 'express';
 import cors from 'cors';
 import { env } from './config/env';
 import { healthRouter } from './routes/health.routes';
+import { authRouter } from './routes/auth.routes';
 import { requestLogger } from './middleware/request-logger';
 import { notFoundHandler } from './middleware/not-found';
 import { errorHandler } from './middleware/error-handler';
@@ -18,7 +19,8 @@ export function createApp(): Express {
   app.use(express.json());
 
   app.use('/health', healthRouter);
-  // Future: app.use('/auth', authRouter); app.use('/walkthroughs', walkthroughRouter);
+  app.use('/auth', authRouter);
+  // Future: app.use('/walkthroughs', authenticate, walkthroughRouter);
 
   // 404 + error handler are always last.
   app.use(notFoundHandler);

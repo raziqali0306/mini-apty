@@ -5,6 +5,8 @@ import manifest from './src/manifest';
 
 export default defineConfig({
   plugins: [react(), crx({ manifest })],
+  // .env (incl. VITE_API_BASE_URL) lives at the monorepo root.
+  envDir: '../../',
   build: {
     // Stable, source-mapped output for an unpacked extension.
     sourcemap: true,

@@ -123,3 +123,95 @@ crashes — replacing the ad-hoc `console.log`s from Entry 1.
 
 ### Next
 Unchanged — backend auth + walkthrough layer (models → auth → CRUD + authZ → tests).
+
+---
+
+## Entry 3 — Auth: schemas + endpoints (signup / login / me) (2026-06-08)
+
+**Goal:** First slice of the backend API — email/password auth returning a JWT, runnable and
+tested end-to-end, before touching walkthroughs.
+
+### What was built
+- **Model** `models/user.model.ts` — `User` (email unique+lowercased, passwordHash, timestamps);
+  `toJSON` strips `_id`/`__v`/`passwordHash` and exposes `id`.
+- **Utils** `lib/password.ts` (bcryptjs hash/verify, cost 10), `lib/jwt.ts` (sign `{sub}` /
+  verify with the `@types/jsonwebtoken@9` `expiresIn` cast).
+- **Auth middleware** `middleware/authenticate.ts` — `Bearer` → `req.userId`, 401 on
+  missing/invalid; Express `Request` augmented in `types/express.d.ts`.
+- **Validation** `schemas/auth.schema.ts` — Zod signup/login (email + min-length password).
+- **Service/controller/routes** — pure `auth.service` (signup/login, throws `AppError`s),
+  thin controllers, `routes/auth.routes.ts`: `POST /auth/signup`, `POST /auth/login`,
+  `GET /auth/me` (behind `authenticate`). Added `conflict()` (409) to `lib/app-error.ts`;
+  mounted `/auth` in `app.ts`.
+- **Tests** `__tests__/setup.ts` (connect to real mongo, dedicated `mini-apty-test` DB, clear
+  between tests) + `auth.test.ts` (10 cases). `vitest.config.ts`: `setupFiles`,
+  `fileParallelism:false`, MONGO_URI computed in setup (not hardcoded).
+
+### Decisions / gotchas
+- **Mongoose is CJS** → under Node's native ESM (how `tsx` runs in the container) the named
+  import `{ models }` isn't exposed and throws at runtime (`does not provide an export named
+  'models'`), even though it typechecks and passes under Vitest (different CJS interop). Fix:
+  `import mongoose from 'mongoose'` and use `mongoose.Schema/model/models`. Lesson: prefer the
+  default import for CJS deps in this ESM backend.
+- **Explicit `Schema<User>` interface** instead of `InferSchemaType` (the latter inferred
+  `unknown` fields here).
+- **Login is enumeration-safe:** unknown email and wrong password both return the same 401.
+- **Duplicate email** mapped from the unique-index violation (atomic) → 409.
+
+### Verification
+| Check | Result |
+| --- | --- |
+| `pnpm --filter backend typecheck` | ✓ |
+| `pnpm --filter backend test` | ✓ 12/12 (10 auth + 2 health) |
+| End-to-end curl vs running container | ✓ signup 201, me 200/401, login 200/401, dup 409, invalid 400 |
+
+### Next
+Walkthrough layer: `Walkthrough`/`Step` model → Zod schemas → CRUD service/controller/routes
+behind `authenticate`, per-owner authZ (403), list by origin/path → tests.
+
+---
+
+## Entry 4 — Extension login/signup UI (SW-brokered auth) (2026-06-08)
+
+**Goal:** Login + signup screens in the side panel, wired to the auth backend, following the
+architecture where the **service worker is the only network broker**.
+
+### What was built
+- **Typed Port-RPC contract** `shared/messages.ts` — request payloads + result maps keyed by RPC
+  type; normalized `ApiError` (`network|auth|validation|conflict|unknown`).
+- **Service worker** `background/service-worker.ts` — now the broker: handles `auth.signup/login/
+  logout/session` + `ping`, does the `fetch` to `VITE_API_BASE_URL`, **persists `{token,user}` in
+  `chrome.storage.local`** (session survives panel close), and normalizes the backend error
+  envelope into `ApiError`. JWT/credentials never live in the panel.
+- **Panel Port client** `lib/port-client.ts` — one Port, request/response correlation by id,
+  20 s keep-alive ping, lazy reconnect on worker eviction (rejects in-flight requests).
+- **Auth store** `store/use-auth-store.ts` (Zustand) — `loading/anonymous/authenticated`, `init`
+  (restores session), `login/signup/logout`, error state. Side effects isolated from views.
+- **Screens** `sidepanel/AuthScreen.tsx` — login⇄signup toggle, Zod client validation
+  (`schemas/auth.ts`), inline field errors (client + server) and a top banner per error kind;
+  `App.tsx` routes on status (loading→spinner, anonymous→AuthScreen, authed→shell + sign-out).
+- **Error boundary** `components/ErrorBoundary.tsx` wrapping the app in `main.tsx`.
+- `vite.config.ts` `envDir: '../../'` so the root `.env` `VITE_API_BASE_URL` is picked up
+  (fallback `http://localhost:4000`). Removed the superseded `use-worker-port` hook (keep-alive
+  now lives in the Port client).
+
+### Decisions
+- **SW-brokered network (not panel `fetch`)** — matches the plan, centralizes JWT, avoids CORS
+  (host-permission fetch from the worker), and the RPC layer is reusable for walkthrough/player.
+- **Session in `chrome.storage.local`**, read on panel open → survives panel close / worker
+  eviction (the worker stays stateless between events).
+- Error kinds drive the UI: validation→inline fields, network/auth/conflict→banner.
+
+### Verification
+| Check | Result |
+| --- | --- |
+| `pnpm --filter extension typecheck` | ✓ |
+| `pnpm --filter extension build` (host + Alpine container watch) | ✓ SW broker + screens bundle |
+| Backend auth endpoints (Entry 3) | ✓ already verified end-to-end |
+
+**Not yet done:** in-browser click-through (no Chrome in this env). To test: reload the unpacked
+extension (`packages/extension/dist`) in Chrome, open the side panel → signup/login → reload to
+confirm the session persists → sign out. Backend must be up (`docker compose up -d`).
+
+### Next
+Unchanged — walkthrough layer; then the author flow can reuse the Port-RPC + SW broker.
