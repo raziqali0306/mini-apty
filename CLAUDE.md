@@ -7,11 +7,11 @@
 - Database: MongoDB via Docker Compose
 
 ## Development Scripts
-- Install: `pnpm i`
-- Containers: `docker compose up -d`
-- Run Backend: `pnpm --filter backend dev`
-- Build Extension: `pnpm --filter extension build`
-- Run Tests: `pnpm --filter backend test`
+Everything runs on Docker.
+- Launch All (DB, API, Extension): `docker compose up --build`
+- Stop All Containers: `docker compose down`
+- View Running Logs: `docker compose logs -f`
+- Run Service Tests: `docker compose exec backend pnpm test`
 
 ## Extension Rules
 - Style Isolation: Isolate UI using a Shadow DOM wrapper with internal Tailwind styles.
@@ -24,4 +24,11 @@
 - Auth / AuthZ: Validate JWT. Use 401 for bad sessions, 403 for multi-tenant tenancy breaks.
 - Lifecycle: Trap SIGTERM/SIGINT signals to explicitly drain Mongoose connection pools.
 - Error Handling: Handle exceptions globally via Express middleware. Output uniform JSON.
+
+## Code Styling & Conventions
+- Type Safety: Enforce strict TypeScript types globally. Never use `any` or `ts-ignore`.
+- UI Components: Write pure functional React components. Avoid inline styling; use Tailwind classes.
+- State Separation: Keep UI views presentational. Isolate side effects and data fetching into custom hooks or Zustand stores.
+- API Patterns: Structure Express handlers using clean async/await syntax wrapped in unified try-catch logic.
+- Schema Validation: Validate all API payloads and extension boundaries using strict runtime Zod objects.
 
