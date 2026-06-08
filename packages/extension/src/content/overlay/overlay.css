@@ -1,0 +1,40 @@
+/*
+ * Overlay styles, adopted into the closed shadow root so they're fully isolated
+ * from the host page. Kept as scoped plain CSS (not Tailwind utilities) so the
+ * content script injected on every page stays tiny — the shadow root is what
+ * satisfies the style-isolation requirement.
+ */
+.ma-highlight {
+  position: fixed;
+  z-index: 2147483647;
+  pointer-events: none;
+  box-sizing: border-box;
+  border: 2px solid #2563eb;
+  background: rgba(37, 99, 235, 0.12);
+  border-radius: 4px;
+  transition:
+    top 60ms ease-out,
+    left 60ms ease-out,
+    width 60ms ease-out,
+    height 60ms ease-out;
+}
+
+.ma-highlight.ma-flash {
+  border-color: #16a34a;
+  background: rgba(22, 163, 74, 0.2);
+}
+
+.ma-label {
+  position: fixed;
+  z-index: 2147483647;
+  pointer-events: none;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #2563eb;
+  color: #fff;
+  font: 11px/1.5 ui-sans-serif, system-ui, -apple-system, sans-serif;
+}

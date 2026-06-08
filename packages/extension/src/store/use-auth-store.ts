@@ -64,3 +64,15 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   clearError: () => set({ error: null }),
 }));
+
+// The worker pushes this when an authed request hits a 401 — drop to the login
+// screen with a clear message instead of leaving a stale "signed in" UI.
+portClient.onEvent((event) => {
+  if (event.type === 'auth.expired') {
+    useAuthStore.setState({
+      user: null,
+      status: 'anonymous',
+      error: { kind: 'auth', message: 'Your session expired — please sign in again.' },
+    });
+  }
+});

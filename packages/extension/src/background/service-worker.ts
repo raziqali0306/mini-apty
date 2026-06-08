@@ -1,15 +1,22 @@
 import {
   PANEL_PORT,
   type ApiError,
+  type AuthorContext,
+  type ContentEvent,
   type Credentials,
+  type RpcType,
+  type SaveWalkthroughInput,
+  type SavedWalkthrough,
   type SessionUser,
+  type WorkerEvent,
 } from '../shared/messages';
+import { toPattern } from '../lib/path-pattern';
 
 /**
- * MV3 service worker — the single broker for network + JWT. It owns all backend
- * I/O and persists the session in chrome.storage.local, so the worker stays
- * stateless between events and the session survives panel close / worker
- * eviction. The panel reaches it over the `panel` Port (see lib/port-client).
+ * MV3 service worker — the single broker for network + JWT and the relay between
+ * the side panel and the content script. It owns all backend I/O, persists the
+ * session in chrome.storage.local, and stays stateless between events (durable
+ * state lives in storage; the open panel Port keeps it warm during a session).
  */
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4000';
@@ -22,8 +29,13 @@ interface StoredAuth {
 
 interface IncomingRequest {
   id: number;
-  type: 'ping' | 'auth.session' | 'auth.signup' | 'auth.login' | 'auth.logout';
-  payload?: Credentials;
+  type: RpcType;
+  payload?: unknown;
+}
+
+interface AuthorSession {
+  recording: boolean;
+  tabId: number;
 }
 
 /** Carries a normalized ApiError up to the request handler. */
@@ -33,7 +45,9 @@ class ApiCallError extends Error {
   }
 }
 
-// Open the side panel when the toolbar icon is clicked.
+// Open panel Ports, so the worker can push events (captured steps, auth.expired).
+const panelPorts = new Set<chrome.runtime.Port>();
+
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel
     .setPanelBehavior({ openPanelOnActionClick: true })
@@ -42,10 +56,24 @@ chrome.runtime.onInstalled.addListener(() => {
 
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== PANEL_PORT) return;
+  panelPorts.add(port);
   port.onMessage.addListener((raw: unknown) => {
     void handleRequest(raw as IncomingRequest, port);
   });
+  port.onDisconnect.addListener(() => panelPorts.delete(port));
 });
+
+// Content script → worker: relay captured steps to the panel.
+chrome.runtime.onMessage.addListener((message: unknown) => {
+  const event = message as ContentEvent;
+  if (event.type === 'author.captured') {
+    broadcast({ type: 'author.captured', step: event.step });
+  }
+});
+
+function broadcast(event: WorkerEvent): void {
+  for (const port of panelPorts) port.postMessage(event);
+}
 
 async function handleRequest(req: IncomingRequest, port: chrome.runtime.Port): Promise<void> {
   try {
@@ -68,14 +96,15 @@ async function route(req: IncomingRequest): Promise<unknown> {
     }
     case 'auth.signup':
     case 'auth.login': {
-      if (!req.payload) {
+      const creds = req.payload as Credentials | undefined;
+      if (!creds) {
         throw new ApiCallError({ kind: 'validation', message: 'Email and password are required' });
       }
       const path = req.type === 'auth.signup' ? '/auth/signup' : '/auth/login';
       const result = await apiFetch<StoredAuth>(path, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(req.payload),
+        body: JSON.stringify(creds),
       });
       await setStored(result);
       return { user: result.user };
@@ -83,20 +112,123 @@ async function route(req: IncomingRequest): Promise<unknown> {
     case 'auth.logout':
       await clearStored();
       return {};
+    case 'author.context':
+      return authorContext();
+    case 'author.start':
+      return authorStart();
+    case 'author.stop':
+      return authorStop();
+    case 'walkthrough.save':
+      return saveWalkthrough(req.payload as SaveWalkthroughInput | undefined);
     default:
       throw new ApiCallError({ kind: 'unknown', message: 'Unknown request' });
   }
 }
 
-async function apiFetch<T>(path: string, init: RequestInit): Promise<T> {
+// ── author ───────────────────────────────────────────────────────────────────
+
+async function authorContext(): Promise<AuthorContext> {
+  const tab = await activeTab();
+  if (!tab?.url) throw new ApiCallError({ kind: 'unknown', message: 'No active tab to author on' });
+  let url: URL;
+  try {
+    url = new URL(tab.url);
+  } catch {
+    throw new ApiCallError({ kind: 'unknown', message: 'Active tab has no valid URL' });
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new ApiCallError({ kind: 'unknown', message: "Can't author on this page" });
+  }
+  return { origin: url.origin, path: url.pathname, suggestedPattern: toPattern(url.pathname) };
+}
+
+async function authorStart(): Promise<{ ok: true }> {
+  const tab = await activeTab();
+  if (tab?.id === undefined) {
+    throw new ApiCallError({ kind: 'unknown', message: 'No active tab to record on' });
+  }
+  await chrome.storage.session.set({
+    author: { recording: true, tabId: tab.id } satisfies AuthorSession,
+  });
+  try {
+    await chrome.tabs.sendMessage(tab.id, { type: 'author.arm' });
+  } catch {
+    throw new ApiCallError({
+      kind: 'unknown',
+      message: "Can't record on this page — open a normal website tab first.",
+    });
+  }
+  return { ok: true };
+}
+
+async function authorStop(): Promise<{ ok: true }> {
+  const session = await getAuthorSession();
+  if (session) {
+    try {
+      await chrome.tabs.sendMessage(session.tabId, { type: 'author.disarm' });
+    } catch {
+      // Tab closed/navigated — nothing to disarm.
+    }
+  }
+  await chrome.storage.session.remove('author');
+  return { ok: true };
+}
+
+async function saveWalkthrough(
+  input: SaveWalkthroughInput | undefined,
+): Promise<{ walkthrough: SavedWalkthrough }> {
+  if (!input) throw new ApiCallError({ kind: 'validation', message: 'Nothing to save' });
+  const saved = await apiFetch<SavedWalkthrough>(
+    '/walkthroughs',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+    { auth: true },
+  );
+  return {
+    walkthrough: {
+      id: saved.id,
+      name: saved.name,
+      origin: saved.origin,
+      pathPattern: saved.pathPattern,
+      version: saved.version,
+    },
+  };
+}
+
+async function activeTab(): Promise<chrome.tabs.Tab | undefined> {
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  return tab;
+}
+
+async function getAuthorSession(): Promise<AuthorSession | undefined> {
+  const result = await chrome.storage.session.get('author');
+  return result.author as AuthorSession | undefined;
+}
+
+// ── network + storage ────────────────────────────────────────────────────────
+
+async function apiFetch<T>(path: string, init: RequestInit, opts?: { auth?: boolean }): Promise<T> {
+  const headers = new Headers(init.headers);
+  if (opts?.auth) {
+    const stored = await getStored();
+    if (stored?.token) headers.set('Authorization', `Bearer ${stored.token}`);
+  }
+
   let res: Response;
   try {
-    res = await fetch(`${API_BASE}${path}`, init);
+    res = await fetch(`${API_BASE}${path}`, { ...init, headers });
   } catch {
     throw new ApiCallError({ kind: 'network', message: 'Cannot reach the server' });
   }
+
   const body: unknown = await res.json().catch(() => null);
-  if (!res.ok) throw new ApiCallError(normalizeError(res.status, body));
+  if (!res.ok) {
+    if (opts?.auth && res.status === 401) broadcast({ type: 'auth.expired' });
+    throw new ApiCallError(normalizeError(res.status, body));
+  }
   return body as T;
 }
 
@@ -111,6 +243,8 @@ function normalizeError(status: number, body: unknown): ApiError {
       return { kind: 'validation', message, fields: details?.fieldErrors };
     }
     case 'UNAUTHORIZED':
+      return { kind: 'auth', message };
+    case 'FORBIDDEN':
       return { kind: 'auth', message };
     case 'CONFLICT':
       return { kind: 'conflict', message };

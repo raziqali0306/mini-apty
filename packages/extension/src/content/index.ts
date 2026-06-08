@@ -1,8 +1,11 @@
+import { initAffordance, arm, disarm } from './overlay/affordance';
+import type { ContentCommand } from '../shared/messages';
+import type { DraftStep } from './targeting/types';
+
 /**
- * Content script — owns DOM access for this tab. It hosts the overlay inside a
- * closed Shadow DOM so host-page CSS/z-index/event handlers cannot break (or be
- * broken by) our UI. Capture listeners, the target resolver, and the
- * MutationObserver/polling loop attach here as features are built.
+ * Content script — owns DOM access for this tab. It hosts the author capture
+ * overlay inside a closed Shadow DOM so host-page CSS/z-index/event handlers
+ * cannot break (or be broken by) our UI. The player overlay attaches here later.
  */
 
 const OVERLAY_HOST_ID = 'mini-apty-overlay-root';
@@ -31,6 +34,14 @@ function mountOverlayHost(): ShadowRoot | null {
 // Idempotent: re-injection (SPA navigations, double-inject) is a no-op.
 const shadowRoot = mountOverlayHost();
 if (shadowRoot) {
-  // Future: render hover affordance (author) / step balloon (player) here,
-  // with Tailwind styles scoped to this shadow root.
+  initAffordance(shadowRoot, (step: DraftStep) => {
+    void chrome.runtime.sendMessage({ type: 'author.captured', step });
+  });
+
+  // Arm/disarm commands relayed from the service worker.
+  chrome.runtime.onMessage.addListener((message: unknown) => {
+    const command = message as ContentCommand;
+    if (command.type === 'author.arm') arm();
+    else if (command.type === 'author.disarm') disarm();
+  });
 }
