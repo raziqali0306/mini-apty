@@ -26,5 +26,9 @@ export const unauthorized = (message = 'Unauthorized'): AppError =>
 export const forbidden = (message = 'Forbidden'): AppError =>
   new AppError(403, 'FORBIDDEN', message);
 
+/** 409 — request conflicts with current state (e.g. duplicate email). */
+export const conflict = (message = 'Conflict', details?: unknown): AppError =>
+  new AppError(409, 'CONFLICT', message, details);
+
 export const notFound = (message = 'Resource not found'): AppError =>
   new AppError(404, 'NOT_FOUND', message);

@@ -123,3 +123,48 @@ crashes — replacing the ad-hoc `console.log`s from Entry 1.
 
 ### Next
 Unchanged — backend auth + walkthrough layer (models → auth → CRUD + authZ → tests).
+
+---
+
+## Entry 3 — Auth: schemas + endpoints (signup / login / me) (2026-06-08)
+
+**Goal:** First slice of the backend API — email/password auth returning a JWT, runnable and
+tested end-to-end, before touching walkthroughs.
+
+### What was built
+- **Model** `models/user.model.ts` — `User` (email unique+lowercased, passwordHash, timestamps);
+  `toJSON` strips `_id`/`__v`/`passwordHash` and exposes `id`.
+- **Utils** `lib/password.ts` (bcryptjs hash/verify, cost 10), `lib/jwt.ts` (sign `{sub}` /
+  verify with the `@types/jsonwebtoken@9` `expiresIn` cast).
+- **Auth middleware** `middleware/authenticate.ts` — `Bearer` → `req.userId`, 401 on
+  missing/invalid; Express `Request` augmented in `types/express.d.ts`.
+- **Validation** `schemas/auth.schema.ts` — Zod signup/login (email + min-length password).
+- **Service/controller/routes** — pure `auth.service` (signup/login, throws `AppError`s),
+  thin controllers, `routes/auth.routes.ts`: `POST /auth/signup`, `POST /auth/login`,
+  `GET /auth/me` (behind `authenticate`). Added `conflict()` (409) to `lib/app-error.ts`;
+  mounted `/auth` in `app.ts`.
+- **Tests** `__tests__/setup.ts` (connect to real mongo, dedicated `mini-apty-test` DB, clear
+  between tests) + `auth.test.ts` (10 cases). `vitest.config.ts`: `setupFiles`,
+  `fileParallelism:false`, MONGO_URI computed in setup (not hardcoded).
+
+### Decisions / gotchas
+- **Mongoose is CJS** → under Node's native ESM (how `tsx` runs in the container) the named
+  import `{ models }` isn't exposed and throws at runtime (`does not provide an export named
+  'models'`), even though it typechecks and passes under Vitest (different CJS interop). Fix:
+  `import mongoose from 'mongoose'` and use `mongoose.Schema/model/models`. Lesson: prefer the
+  default import for CJS deps in this ESM backend.
+- **Explicit `Schema<User>` interface** instead of `InferSchemaType` (the latter inferred
+  `unknown` fields here).
+- **Login is enumeration-safe:** unknown email and wrong password both return the same 401.
+- **Duplicate email** mapped from the unique-index violation (atomic) → 409.
+
+### Verification
+| Check | Result |
+| --- | --- |
+| `pnpm --filter backend typecheck` | ✓ |
+| `pnpm --filter backend test` | ✓ 12/12 (10 auth + 2 health) |
+| End-to-end curl vs running container | ✓ signup 201, me 200/401, login 200/401, dup 409, invalid 400 |
+
+### Next
+Walkthrough layer: `Walkthrough`/`Step` model → Zod schemas → CRUD service/controller/routes
+behind `authenticate`, per-owner authZ (403), list by origin/path → tests.
