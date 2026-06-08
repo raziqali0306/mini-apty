@@ -144,3 +144,6 @@ vite.config.ts.timestamp-*
 
 # Challenge brief
 Take-Home Challenge *.pdf
+
+# Internal notes (implementation log, sub-plans) — not part of the submitted repo
+.notes/
