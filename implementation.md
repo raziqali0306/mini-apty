@@ -265,3 +265,30 @@ with a consistent 401/403/404 distinction.
 Backend REST surface is complete. Extension side: targeting + Shadow-DOM overlay (Step 3), then
 author flow (Step 4) and player flow (Step 5) — reusing the Port-RPC + SW broker and the
 walkthrough endpoints.
+
+---
+
+## Entry 6 — Extension mode navigation (home / author / preview) (2026-06-09)
+
+**Goal:** After sign-in, give the panel a mode picker so each flow has a home — Author entry +
+Preview list — before building the flows themselves.
+
+### What was built
+- `store/use-app-store.ts` — `Mode = 'home' | 'author' | 'preview'` (+ `setMode`).
+- `sidepanel/HomeScreen.tsx` — two cards (Author / Preview) that set the mode.
+- `sidepanel/AuthorScreen.tsx` — placeholder (disabled "Start recording") for the next step.
+- `sidepanel/PreviewScreen.tsx` — **dummy** saved-walkthrough list (3 sample rows) until it's
+  wired to `GET /walkthroughs?origin=&path=`.
+- `App.tsx` — signed-in shell: header with back (when not home) + sign-out, body switches on mode.
+
+### Verification
+| Check | Result |
+| --- | --- |
+| `pnpm --filter extension typecheck` | ✓ |
+| `pnpm --filter extension build` | ✓ |
+
+(Not click-tested in Chrome — reload `dist/` to try: sign in → Author / Preview cards → back.)
+
+### Next
+**Author mode** — arm the content script, capture clicked elements with a Shadow-DOM affordance,
+edit step title/description + advance trigger, save via the SW broker to `POST /walkthroughs`.

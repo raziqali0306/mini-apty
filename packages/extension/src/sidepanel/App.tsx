@@ -1,17 +1,23 @@
 import { useEffect } from 'react';
 import { useAuthStore } from '../store/use-auth-store';
+import { useAppStore } from '../store/use-app-store';
 import { AuthScreen } from './AuthScreen';
+import { HomeScreen } from './HomeScreen';
+import { AuthorScreen } from './AuthorScreen';
+import { PreviewScreen } from './PreviewScreen';
 
 /**
- * Side-panel root. Routes on auth status: restores the session on mount, shows
- * the auth screen when signed out, and the (placeholder) authoring surface once
- * signed in. Author/player flows mount in the signed-in branch later.
+ * Side-panel root. Routes on auth status, then (when signed in) on the selected
+ * mode: home picker → author or preview. Author/player flows fill in their
+ * screens in later steps.
  */
 export function App(): JSX.Element {
   const status = useAuthStore((s) => s.status);
   const user = useAuthStore((s) => s.user);
   const init = useAuthStore((s) => s.init);
   const logout = useAuthStore((s) => s.logout);
+  const mode = useAppStore((s) => s.mode);
+  const setMode = useAppStore((s) => s.setMode);
 
   useEffect(() => {
     void init();
@@ -29,10 +35,24 @@ export function App(): JSX.Element {
     return <AuthScreen />;
   }
 
+  const title = mode === 'author' ? 'Author' : mode === 'preview' ? 'Preview' : 'Mini Apty';
+
   return (
-    <div className="flex min-h-screen flex-col gap-4 bg-slate-50 p-4 text-slate-900">
-      <header className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold">Mini Apty</h1>
+    <div className="flex min-h-screen flex-col bg-slate-50 text-slate-900">
+      <header className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+        <div className="flex items-center gap-2">
+          {mode !== 'home' && (
+            <button
+              type="button"
+              onClick={() => setMode('home')}
+              aria-label="Back"
+              className="rounded px-1 text-slate-500 hover:text-slate-900"
+            >
+              ←
+            </button>
+          )}
+          <h1 className="text-base font-semibold">{title}</h1>
+        </div>
         <button
           type="button"
           onClick={() => void logout()}
@@ -42,12 +62,17 @@ export function App(): JSX.Element {
         </button>
       </header>
 
-      <p className="text-sm text-slate-500">
-        Signed in as <span className="font-medium text-slate-900">{user?.email}</span>
-      </p>
-
-      <main className="flex flex-1 flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 text-center">
-        <p className="text-sm text-slate-500">Author and player flows land here.</p>
+      <main className="flex-1 p-4">
+        {mode === 'home' && (
+          <div className="flex flex-col gap-3">
+            <p className="text-sm text-slate-500">
+              Signed in as <span className="font-medium text-slate-900">{user?.email}</span>
+            </p>
+            <HomeScreen onSelectMode={setMode} />
+          </div>
+        )}
+        {mode === 'author' && <AuthorScreen />}
+        {mode === 'preview' && <PreviewScreen />}
       </main>
     </div>
   );
