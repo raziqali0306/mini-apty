@@ -15,6 +15,8 @@ interface AuthorState {
   name: string;
   pattern: string;
   saveStatus: SaveStatus;
+  /** True when the last save only persisted locally (backend unreachable). */
+  savedOffline: boolean;
   error: ApiError | null;
 
   loadContext: () => Promise<void>;
@@ -38,6 +40,7 @@ export const useAuthorStore = create<AuthorState>((set, get) => ({
   name: '',
   pattern: '',
   saveStatus: 'idle',
+  savedOffline: false,
   error: null,
 
   loadContext: async () => {
@@ -108,15 +111,23 @@ export const useAuthorStore = create<AuthorState>((set, get) => ({
     };
 
     try {
-      await portClient.request('walkthrough.save', payload);
-      set({ saveStatus: 'saved' });
+      const result = await portClient.request('walkthrough.save', payload);
+      set({ saveStatus: 'saved', savedOffline: !result.synced });
     } catch (err) {
       set({ saveStatus: 'idle', error: err as ApiError });
     }
   },
 
   reset: () =>
-    set({ recording: false, steps: [], name: '', pattern: '', saveStatus: 'idle', error: null }),
+    set({
+      recording: false,
+      steps: [],
+      name: '',
+      pattern: '',
+      saveStatus: 'idle',
+      savedOffline: false,
+      error: null,
+    }),
 
   clearError: () => set({ error: null }),
 }));

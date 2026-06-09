@@ -88,6 +88,11 @@ export function hideBalloon(): void {
   detachReposition();
 }
 
+/** Re-anchor to the current target — used after DOM mutations move it. */
+export function repositionBalloon(): void {
+  reposition();
+}
+
 function reposition(): void {
   if (!ring || !card) return;
 

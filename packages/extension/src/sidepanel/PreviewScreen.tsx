@@ -102,7 +102,14 @@ export function PreviewScreen(): JSX.Element {
                 className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white p-3 text-left shadow-sm transition hover:border-slate-400 hover:shadow disabled:opacity-60"
               >
                 <span className="flex min-w-0 flex-col">
-                  <span className="truncate text-sm font-medium text-slate-900">{wt.name}</span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="truncate text-sm font-medium text-slate-900">{wt.name}</span>
+                    {wt.syncStatus === 'pending' && (
+                      <span className="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
+                        Sync pending
+                      </span>
+                    )}
+                  </span>
                   <span className="truncate font-mono text-xs text-slate-500">{wt.pathPattern}</span>
                 </span>
                 <span className="shrink-0 pl-2 text-xs text-slate-400">

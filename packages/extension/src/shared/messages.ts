@@ -66,6 +66,8 @@ export interface WalkthroughSummary {
   name: string;
   pathPattern: string;
   stepCount: number;
+  /** `pending` = saved locally but not yet synced to the backend. */
+  syncStatus: 'synced' | 'pending';
 }
 
 export interface WalkthroughListResult {
@@ -101,7 +103,7 @@ export interface RpcResultMap {
   'author.context': AuthorContext;
   'author.start': { ok: true };
   'author.stop': { ok: true };
-  'walkthrough.save': { walkthrough: SavedWalkthrough };
+  'walkthrough.save': { walkthrough: SavedWalkthrough; synced: boolean };
   'walkthrough.list': WalkthroughListResult;
   'walkthrough.play': { ok: true };
 }

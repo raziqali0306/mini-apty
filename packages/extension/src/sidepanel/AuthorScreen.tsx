@@ -37,6 +37,7 @@ export function AuthorScreen(): JSX.Element {
   const name = useAuthorStore((s) => s.name);
   const pattern = useAuthorStore((s) => s.pattern);
   const saveStatus = useAuthorStore((s) => s.saveStatus);
+  const savedOffline = useAuthorStore((s) => s.savedOffline);
   const error = useAuthorStore((s) => s.error);
   const {
     loadContext,
@@ -57,8 +58,16 @@ export function AuthorScreen(): JSX.Element {
   if (saveStatus === 'saved') {
     return (
       <div className="flex flex-col items-center gap-4 py-8 text-center">
-        <div className="text-sm font-semibold text-emerald-700">Walkthrough saved ✓</div>
-        <p className="text-xs text-slate-500">It's stored on the backend for this page.</p>
+        <div
+          className={`text-sm font-semibold ${savedOffline ? 'text-amber-700' : 'text-emerald-700'}`}
+        >
+          {savedOffline ? 'Saved locally — sync pending' : 'Walkthrough saved ✓'}
+        </div>
+        <p className="text-xs text-slate-500">
+          {savedOffline
+            ? "Backend unreachable; it'll sync automatically when you're back online."
+            : "It's stored on the backend for this page."}
+        </p>
         <button
           type="button"
           onClick={() => {

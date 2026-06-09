@@ -1,5 +1,5 @@
 import { resolveElement } from './targeting/resolver';
-import { initBalloon, showBalloon, hideBalloon } from './overlay/balloon';
+import { initBalloon, showBalloon, hideBalloon, repositionBalloon } from './overlay/balloon';
 import {
   playerKey,
   walkthroughKey,
@@ -14,11 +14,15 @@ import type { AdvanceTriggerKind } from './targeting/types';
  * On-page player. Resolves each step's element (with retry/poll for async/SPA
  * renders), renders the balloon, advances on Back/Next or the configured
  * trigger, and persists progress so a refresh/return resumes at the right step.
+ *
+ * A MutationObserver re-anchors (or re-resolves) when the host re-renders the
+ * target, and patched history APIs re-evaluate the session on SPA route changes.
  */
 
 const FAST_RETRY_MS = 400;
 const FAST_RETRIES = 8;
 const SLOW_POLL_MS = 1000;
+const LOCATION_CHANGE = 'mini-apty:locationchange';
 
 interface ActivePlay {
   wt: PlayerWalkthrough;
@@ -26,11 +30,18 @@ interface ActivePlay {
 }
 
 let active: ActivePlay | null = null;
+let anchoredEl: Element | null = null;
 let pollTimer: number | undefined;
 let triggerCleanup: (() => void) | undefined;
+let observer: MutationObserver | undefined;
+let observing = false;
+let observerRaf = 0;
+let historyPatched = false;
 
 export function initPlayer(root: ShadowRoot): void {
   initBalloon(root);
+  patchHistory();
+  window.addEventListener(LOCATION_CHANGE, onLocationChange);
 }
 
 /** Start (or resume) from the persisted session — used on page load and on play. */
@@ -48,8 +59,10 @@ export async function startPlayerFromStorage(): Promise<void> {
 
 export function stopPlayer(): void {
   active = null;
+  anchoredEl = null;
   clearPoll();
   clearTrigger();
+  clearObserver();
   hideBalloon();
 }
 
@@ -57,6 +70,7 @@ function renderStep(): void {
   if (!active) return;
   clearPoll();
   clearTrigger();
+  anchoredEl = null;
 
   const step = active.wt.steps[active.index];
   if (!step) {
@@ -73,6 +87,7 @@ function renderStep(): void {
 
     if (found) {
       clearTrigger();
+      anchoredEl = found;
       showBalloon(found, {
         index: active.index,
         total: active.wt.steps.length,
@@ -86,12 +101,14 @@ function renderStep(): void {
         onClose: () => void finish(),
       });
       attachTrigger(step.advanceTrigger.kind, found);
+      startObserving();
       return;
     }
 
     attempts += 1;
     if (attempts > FAST_RETRIES && !announcedMissing) {
       announcedMissing = true;
+      anchoredEl = null;
       // Degraded balloon — never block; allow Skip/End. Keep polling in case the
       // element renders late (SPA), which re-attaches automatically.
       showBalloon(null, {
@@ -157,6 +174,62 @@ function triggerHint(kind: AdvanceTriggerKind): string | undefined {
   if (kind === 'click-target') return 'Click the highlighted element to continue.';
   if (kind === 'input-change') return 'Change the highlighted field to continue.';
   return undefined;
+}
+
+// ── SPA / mutation resilience ─────────────────────────────────────────────────
+
+function startObserving(): void {
+  if (!observer) observer = new MutationObserver(onMutation);
+  if (observing) return;
+  observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true });
+  observing = true;
+}
+
+function clearObserver(): void {
+  observer?.disconnect();
+  observing = false;
+  cancelAnimationFrame(observerRaf);
+}
+
+function onMutation(): void {
+  cancelAnimationFrame(observerRaf);
+  observerRaf = requestAnimationFrame(() => {
+    if (!active || !anchoredEl) return;
+    // Target replaced by a re-render → re-resolve; otherwise it may have moved.
+    if (!anchoredEl.isConnected) renderStep();
+    else repositionBalloon();
+  });
+}
+
+function patchHistory(): void {
+  if (historyPatched) return;
+  historyPatched = true;
+  const fire = (): void => {
+    window.dispatchEvent(new Event(LOCATION_CHANGE));
+  };
+
+  const origPush = history.pushState.bind(history);
+  history.pushState = (...args: Parameters<History['pushState']>): void => {
+    origPush(...args);
+    fire();
+  };
+  const origReplace = history.replaceState.bind(history);
+  history.replaceState = (...args: Parameters<History['replaceState']>): void => {
+    origReplace(...args);
+    fire();
+  };
+  window.addEventListener('popstate', fire);
+}
+
+/** On any SPA navigation, re-evaluate the session against the new path. */
+function onLocationChange(): void {
+  clearPoll();
+  clearTrigger();
+  clearObserver();
+  hideBalloon();
+  active = null;
+  anchoredEl = null;
+  void startPlayerFromStorage();
 }
 
 /** Resolution must never crash the host page — treat any failure as "not found". */
