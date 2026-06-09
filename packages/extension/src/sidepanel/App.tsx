@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useAuthStore } from '../store/use-auth-store';
 import { useAppStore } from '../store/use-app-store';
+import { useAuthorStore } from '../store/use-author-store';
 import { AuthScreen } from './AuthScreen';
 import { HomeScreen } from './HomeScreen';
 import { AuthorScreen } from './AuthorScreen';
@@ -18,6 +19,7 @@ export function App(): JSX.Element {
   const logout = useAuthStore((s) => s.logout);
   const mode = useAppStore((s) => s.mode);
   const setMode = useAppStore((s) => s.setMode);
+  const editingId = useAuthorStore((s) => s.editingId);
 
   useEffect(() => {
     void init();
@@ -35,7 +37,14 @@ export function App(): JSX.Element {
     return <AuthScreen />;
   }
 
-  const title = mode === 'author' ? 'Author' : mode === 'preview' ? 'Preview' : 'Mini Apty';
+  const title =
+    mode === 'author'
+      ? editingId
+        ? 'Edit walkthrough'
+        : 'Author'
+      : mode === 'preview'
+        ? 'Preview'
+        : 'Mini Apty';
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-50 text-slate-900">
@@ -68,7 +77,13 @@ export function App(): JSX.Element {
             <p className="text-sm text-slate-500">
               Signed in as <span className="font-medium text-slate-900">{user?.email}</span>
             </p>
-            <HomeScreen onSelectMode={setMode} />
+            <HomeScreen
+              onSelectMode={(next) => {
+                // Fresh authoring from Home — clear any leftover edit state.
+                if (next === 'author') useAuthorStore.getState().reset();
+                setMode(next);
+              }}
+            />
           </div>
         )}
         {mode === 'author' && <AuthorScreen />}

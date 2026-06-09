@@ -3,7 +3,6 @@ import { initBalloon, showBalloon, hideBalloon, repositionBalloon } from './over
 import {
   playerKey,
   walkthroughKey,
-  pathMatchesPattern,
   type PlayerSession,
   type PlayerStep,
   type PlayerWalkthrough,
@@ -12,16 +11,20 @@ import type { AdvanceTriggerKind } from './targeting/types';
 
 /**
  * On-page player. Resolves each step's element (with retry/poll for async/SPA
- * renders), renders the balloon, advances on Back/Next or the configured
- * trigger, and persists progress so a refresh/return resumes at the right step.
+ * renders), renders the balloon, advances on Back/Next or a click-target, and
+ * persists progress so a refresh/reroute resumes at the right step.
  *
- * A MutationObserver re-anchors (or re-resolves) when the host re-renders the
- * target, and patched history APIs re-evaluate the session on SPA route changes.
+ * Progress is kept in **localStorage** (synchronous, so it survives a full-page
+ * navigation a click may trigger), and a walkthrough resumes wherever its
+ * current step's element appears — not by matching a path — so guided flows can
+ * span routes. A MutationObserver re-anchors across re-renders; patched history
+ * APIs re-evaluate on SPA route changes.
  */
 
 const FAST_RETRY_MS = 400;
 const FAST_RETRIES = 8;
 const SLOW_POLL_MS = 1000;
+const RESUME_PROBE_MS = 8000;
 const LOCATION_CHANGE = 'mini-apty:locationchange';
 
 interface ActivePlay {
@@ -44,16 +47,32 @@ export function initPlayer(root: ShadowRoot): void {
   window.addEventListener(LOCATION_CHANGE, onLocationChange);
 }
 
-/** Start (or resume) from the persisted session — used on page load and on play. */
-export async function startPlayerFromStorage(): Promise<void> {
-  const session = await readSession();
-  if (!session) return;
-  const wt = await readWalkthrough(session.id);
-  if (!wt) return;
-  // Only play on a page the walkthrough actually targets.
-  if (!pathMatchesPattern(wt.pathPattern, location.pathname)) return;
+/** Start a freshly-seeded play (panel click) — the worker hands in the id. */
+export function beginPlay(id: string): void {
+  stopPlayer();
+  writeProgress({ id, stepIndex: 0 });
+  void startPlayerFromStorage();
+}
 
-  active = { wt, index: clamp(session.stepIndex, wt.steps.length) };
+/**
+ * Resume from persisted progress (page load / navigation). Resumes only if the
+ * current step's element appears on this page within a budget — so it follows a
+ * flow across routes and stays quiet on unrelated pages.
+ */
+export async function startPlayerFromStorage(): Promise<void> {
+  const progress = readProgress();
+  if (!progress) return;
+  const wt = await readWalkthrough(progress.id);
+  if (!wt) return;
+  const index = clamp(progress.stepIndex, wt.steps.length);
+  const step = wt.steps[index];
+  if (!step) {
+    clearProgress();
+    return;
+  }
+  const found = await probeForElement(step.target, RESUME_PROBE_MS);
+  if (!found || active) return; // not here (yet), or another run started meanwhile
+  active = { wt, index };
   renderStep();
 }
 
@@ -74,12 +93,13 @@ function renderStep(): void {
 
   const step = active.wt.steps[active.index];
   if (!step) {
-    void finish();
+    finish();
     return;
   }
   const isLast = active.index === active.wt.steps.length - 1;
   let announcedMissing = false;
   let attempts = 0;
+  let scrolled = false;
 
   const tick = (): void => {
     if (!active) return;
@@ -88,19 +108,22 @@ function renderStep(): void {
     if (found) {
       clearTrigger();
       anchoredEl = found;
+      if (!scrolled) {
+        scrolled = true;
+        ensureVisible(found); // scroll to the element once, when the step shows
+      }
       showBalloon(found, {
         index: active.index,
         total: active.wt.steps.length,
         title: step.title,
         description: step.description,
         canPrev: active.index > 0,
-        // click-target advances by interacting with the page — no Next button.
         showNext: step.advanceTrigger.kind !== 'click-target',
         nextLabel: isLast ? 'Finish' : 'Next',
         hint: triggerHint(step.advanceTrigger.kind),
         onPrev: prev,
         onNext: next,
-        onClose: () => void finish(),
+        onClose: finish,
       });
       attachTrigger(step.advanceTrigger.kind, found);
       startObserving();
@@ -111,8 +134,6 @@ function renderStep(): void {
     if (attempts > FAST_RETRIES && !announcedMissing) {
       announcedMissing = true;
       anchoredEl = null;
-      // Degraded balloon — never block; allow Skip/End. Keep polling in case the
-      // element renders late (SPA), which re-attaches automatically.
       showBalloon(null, {
         index: active.index,
         total: active.wt.steps.length,
@@ -124,7 +145,7 @@ function renderStep(): void {
         hint: 'Waiting for the element to appear…',
         onPrev: prev,
         onNext: next,
-        onClose: () => void finish(),
+        onClose: finish,
       });
     }
     pollTimer = window.setTimeout(tick, attempts > FAST_RETRIES ? SLOW_POLL_MS : FAST_RETRY_MS);
@@ -136,23 +157,23 @@ function renderStep(): void {
 function next(): void {
   if (!active) return;
   if (active.index >= active.wt.steps.length - 1) {
-    void finish();
+    finish();
     return;
   }
   active.index += 1;
-  void persist();
+  writeProgress({ id: active.wt.id, stepIndex: active.index });
   renderStep();
 }
 
 function prev(): void {
   if (!active || active.index === 0) return;
   active.index -= 1;
-  void persist();
+  writeProgress({ id: active.wt.id, stepIndex: active.index });
   renderStep();
 }
 
-async function finish(): Promise<void> {
-  await clearSession();
+function finish(): void {
+  clearProgress();
   stopPlayer();
 }
 
@@ -170,6 +191,36 @@ function triggerHint(kind: AdvanceTriggerKind): string | undefined {
   if (kind === 'click-target') return 'Click the highlighted element to continue.';
   if (kind === 'input-change') return 'Fill in the field, then click Next.';
   return undefined;
+}
+
+/** Scroll an off-screen element into view once (e.g. a step at the page bottom). */
+function ensureVisible(el: Element): void {
+  const r = el.getBoundingClientRect();
+  const fullyVisible =
+    r.top >= 0 && r.left >= 0 && r.bottom <= window.innerHeight && r.right <= window.innerWidth;
+  if (!fullyVisible) {
+    el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+  }
+}
+
+/** Poll for an element up to a budget (used to decide whether to resume here). */
+function probeForElement(target: PlayerStep['target'], budgetMs: number): Promise<Element | null> {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const tick = (): void => {
+      const el = safeResolve(target);
+      if (el) {
+        resolve(el);
+        return;
+      }
+      if (Date.now() - start >= budgetMs) {
+        resolve(null);
+        return;
+      }
+      window.setTimeout(tick, 300);
+    };
+    tick();
+  });
 }
 
 // ── SPA / mutation resilience ─────────────────────────────────────────────────
@@ -191,7 +242,6 @@ function onMutation(): void {
   cancelAnimationFrame(observerRaf);
   observerRaf = requestAnimationFrame(() => {
     if (!active || !anchoredEl) return;
-    // Target replaced by a re-render → re-resolve; otherwise it may have moved.
     if (!anchoredEl.isConnected) renderStep();
     else repositionBalloon();
   });
@@ -217,13 +267,8 @@ function patchHistory(): void {
   window.addEventListener('popstate', fire);
 }
 
-/**
- * On SPA navigation: if a walkthrough is active, keep its progress and just
- * re-resolve the current step on the new view (the retry/poll waits for a
- * dynamically-loaded element to appear) — a guided flow may legitimately span
- * routes, so we don't gate mid-flow on `pathPattern`. With no active play, fall
- * back to the persisted session for this page.
- */
+/** On SPA navigation: keep an active run going (re-resolve the current step on
+ * the new view); otherwise try to resume from persisted progress. */
 function onLocationChange(): void {
   clearPoll();
   clearTrigger();
@@ -264,27 +309,38 @@ function clamp(index: number, length: number): number {
   return Math.min(Math.max(0, index), length - 1);
 }
 
-// ── persistence (content scripts can read/write chrome.storage.local) ─────────
+// ── persistence ───────────────────────────────────────────────────────────────
 
-async function readSession(): Promise<PlayerSession | undefined> {
-  const key = playerKey(location.origin);
-  const result = await chrome.storage.local.get(key);
-  return result[key] as PlayerSession | undefined;
+/** Progress lives in localStorage: synchronous, so it's saved before a click's
+ * navigation unloads the page. Keyed per origin. */
+function writeProgress(session: PlayerSession): void {
+  try {
+    localStorage.setItem(playerKey(location.origin), JSON.stringify(session));
+  } catch {
+    /* storage may be blocked on some pages */
+  }
 }
 
+function readProgress(): PlayerSession | undefined {
+  try {
+    const raw = localStorage.getItem(playerKey(location.origin));
+    return raw ? (JSON.parse(raw) as PlayerSession) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function clearProgress(): void {
+  try {
+    localStorage.removeItem(playerKey(location.origin));
+  } catch {
+    /* ignore */
+  }
+}
+
+/** The full walkthrough body is cached by the worker in chrome.storage.local. */
 async function readWalkthrough(id: string): Promise<PlayerWalkthrough | undefined> {
   const key = walkthroughKey(id);
   const result = await chrome.storage.local.get(key);
   return result[key] as PlayerWalkthrough | undefined;
-}
-
-async function persist(): Promise<void> {
-  if (!active) return;
-  await chrome.storage.local.set({
-    [playerKey(location.origin)]: { id: active.wt.id, stepIndex: active.index } satisfies PlayerSession,
-  });
-}
-
-async function clearSession(): Promise<void> {
-  await chrome.storage.local.remove(playerKey(location.origin));
 }

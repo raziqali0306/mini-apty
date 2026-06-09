@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { useWalkthroughList } from '../hooks/use-walkthrough-list';
+import { useAuthorStore } from '../store/use-author-store';
+import { useAppStore } from '../store/use-app-store';
 import { portClient } from '../lib/port-client';
 import type { ApiError } from '../shared/messages';
 
@@ -14,11 +16,48 @@ function errorMessage(error: ApiError): string {
   }
 }
 
-/** Preview mode — lists the current site's saved walkthroughs and plays them. */
+const iconProps = {
+  width: 15,
+  height: 15,
+  viewBox: '0 0 24 24',
+  fill: 'none',
+  stroke: 'currentColor',
+  strokeWidth: 2,
+  strokeLinecap: 'round',
+  strokeLinejoin: 'round',
+} as const;
+
+const PencilIcon = (): JSX.Element => (
+  <svg {...iconProps} aria-hidden="true">
+    <path d="M12 20h9" />
+    <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+  </svg>
+);
+const TrashIcon = (): JSX.Element => (
+  <svg {...iconProps} aria-hidden="true">
+    <path d="M3 6h18" />
+    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+  </svg>
+);
+const CheckIcon = (): JSX.Element => (
+  <svg {...iconProps} aria-hidden="true">
+    <polyline points="20 6 9 17 4 12" />
+  </svg>
+);
+const XIcon = (): JSX.Element => (
+  <svg {...iconProps} aria-hidden="true">
+    <path d="M18 6 6 18" />
+    <path d="m6 6 12 12" />
+  </svg>
+);
+
+/** Preview mode — lists the current site's saved walkthroughs; play / edit / delete. */
 export function PreviewScreen(): JSX.Element {
   const { state, reload } = useWalkthroughList();
   const [notice, setNotice] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const [playingId, setPlayingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
 
   async function play(id: string): Promise<void> {
     setNotice(null);
@@ -30,6 +69,31 @@ export function PreviewScreen(): JSX.Element {
       setNotice({ kind: 'err', text: errorMessage(err as ApiError) });
     } finally {
       setPlayingId(null);
+    }
+  }
+
+  async function edit(id: string): Promise<void> {
+    setNotice(null);
+    try {
+      const { walkthrough } = await portClient.request('walkthrough.get', { id });
+      useAuthorStore.getState().loadForEdit(walkthrough);
+      useAppStore.getState().setMode('author');
+    } catch (err) {
+      setNotice({ kind: 'err', text: errorMessage(err as ApiError) });
+    }
+  }
+
+  async function remove(id: string): Promise<void> {
+    setNotice(null);
+    setDeletingId(id);
+    try {
+      await portClient.request('walkthrough.delete', { id });
+      setConfirmingId(null);
+      reload();
+    } catch (err) {
+      setNotice({ kind: 'err', text: errorMessage(err as ApiError) });
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -68,11 +132,7 @@ export function PreviewScreen(): JSX.Element {
         <p className="truncate font-mono text-xs text-slate-500" title={context.origin}>
           {context.origin}
         </p>
-        <button
-          type="button"
-          onClick={reload}
-          className="text-xs text-slate-400 hover:text-slate-700"
-        >
+        <button type="button" onClick={reload} className="text-xs text-slate-400 hover:text-slate-700">
           Refresh
         </button>
       </div>
@@ -94,12 +154,15 @@ export function PreviewScreen(): JSX.Element {
       ) : (
         <ul className="flex flex-col gap-2">
           {walkthroughs.map((wt) => (
-            <li key={wt.id}>
+            <li
+              key={wt.id}
+              className="flex items-stretch rounded-lg border border-slate-200 bg-white shadow-sm"
+            >
               <button
                 type="button"
                 onClick={() => void play(wt.id)}
                 disabled={playingId === wt.id}
-                className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white p-3 text-left shadow-sm transition hover:border-slate-400 hover:shadow disabled:opacity-60"
+                className="flex min-w-0 flex-1 items-center justify-between rounded-l-lg p-3 text-left transition hover:bg-slate-50 disabled:opacity-60"
               >
                 <span className="flex min-w-0 flex-col">
                   <span className="flex items-center gap-1.5">
@@ -116,6 +179,53 @@ export function PreviewScreen(): JSX.Element {
                   {playingId === wt.id ? 'Starting…' : `${wt.stepCount} steps`}
                 </span>
               </button>
+
+              <div className="flex items-center gap-1 border-l border-slate-100 px-1.5">
+                {confirmingId === wt.id ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => void remove(wt.id)}
+                      disabled={deletingId === wt.id}
+                      aria-label="Confirm delete"
+                      title="Confirm delete"
+                      className="rounded p-1.5 text-red-600 hover:bg-red-50 disabled:opacity-40"
+                    >
+                      <CheckIcon />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmingId(null)}
+                      aria-label="Cancel"
+                      title="Cancel"
+                      className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                    >
+                      <XIcon />
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => void edit(wt.id)}
+                      aria-label="Edit walkthrough"
+                      title="Edit"
+                      className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-800"
+                    >
+                      <PencilIcon />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmingId(wt.id)}
+                      aria-label="Delete walkthrough"
+                      title="Delete"
+                      className="rounded p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"
+                    >
+                      <TrashIcon />
+                    </button>
+                  </>
+                )}
+              </div>
             </li>
           ))}
         </ul>

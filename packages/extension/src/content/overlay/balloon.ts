@@ -107,9 +107,6 @@ function reposition(): void {
   }
 
   const r = currentTarget.getBoundingClientRect();
-  if (r.top < 0 || r.bottom > window.innerHeight) {
-    currentTarget.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  }
 
   ring.style.display = 'block';
   ring.style.top = `${r.top - 3}px`;

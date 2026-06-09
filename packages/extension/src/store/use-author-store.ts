@@ -1,11 +1,19 @@
 import { create } from 'zustand';
 import { portClient } from '../lib/port-client';
 import type { ApiError, AuthorContext, SaveWalkthroughInput } from '../shared/messages';
+import type { PlayerWalkthrough } from '../shared/player';
 import type { DraftStep } from '../content/targeting/types';
 
 type SaveStatus = 'idle' | 'saving' | 'saved';
 
 type StepPatch = Partial<Pick<DraftStep, 'title' | 'description' | 'advanceTrigger'>>;
+
+function uuid(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `e-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e9).toString(36)}`;
+}
 
 interface AuthorState {
   recording: boolean;
@@ -14,16 +22,20 @@ interface AuthorState {
   context: AuthorContext | null;
   name: string;
   pattern: string;
+  /** Set when editing an existing walkthrough (save → PUT instead of POST). */
+  editingId: string | null;
   saveStatus: SaveStatus;
   /** True when the last save only persisted locally (backend unreachable). */
   savedOffline: boolean;
   error: ApiError | null;
 
   loadContext: () => Promise<void>;
+  loadForEdit: (walkthrough: PlayerWalkthrough) => void;
   start: () => Promise<void>;
   stop: () => Promise<void>;
   addStep: (step: DraftStep) => void;
   updateStep: (tempId: string, patch: StepPatch) => void;
+  moveStep: (tempId: string, direction: -1 | 1) => void;
   removeStep: (tempId: string) => void;
   setName: (name: string) => void;
   setPattern: (pattern: string) => void;
@@ -39,6 +51,7 @@ export const useAuthorStore = create<AuthorState>((set, get) => ({
   context: null,
   name: '',
   pattern: '',
+  editingId: null,
   saveStatus: 'idle',
   savedOffline: false,
   error: null,
@@ -51,6 +64,33 @@ export const useAuthorStore = create<AuthorState>((set, get) => ({
       set({ error: err as ApiError });
     }
   },
+
+  loadForEdit: (walkthrough) =>
+    set({
+      editingId: walkthrough.id,
+      name: walkthrough.name,
+      pattern: walkthrough.pathPattern,
+      context: {
+        origin: walkthrough.origin,
+        path: walkthrough.pathPattern,
+        suggestedPattern: walkthrough.pathPattern,
+      },
+      steps: walkthrough.steps.map((s, i) => ({
+        tempId: uuid(),
+        order: i,
+        title: s.title,
+        description: s.description,
+        advanceTrigger: s.advanceTrigger.kind,
+        target: s.target,
+        // Capabilities can't be recomputed off-page — allow any kind while editing.
+        capabilities: { clickTarget: true, inputChange: true },
+      })),
+      recording: false,
+      starting: false,
+      saveStatus: 'idle',
+      savedOffline: false,
+      error: null,
+    }),
 
   start: async () => {
     set({ error: null, starting: true });
@@ -77,6 +117,17 @@ export const useAuthorStore = create<AuthorState>((set, get) => ({
   updateStep: (tempId, patch) =>
     set((s) => ({ steps: s.steps.map((st) => (st.tempId === tempId ? { ...st, ...patch } : st)) })),
 
+  moveStep: (tempId, direction) =>
+    set((s) => {
+      const idx = s.steps.findIndex((st) => st.tempId === tempId);
+      const target = idx + direction;
+      if (idx < 0 || target < 0 || target >= s.steps.length) return {};
+      const steps = [...s.steps];
+      const [moved] = steps.splice(idx, 1);
+      steps.splice(target, 0, moved);
+      return { steps: steps.map((st, i) => ({ ...st, order: i })) };
+    }),
+
   removeStep: (tempId) =>
     set((s) => ({
       steps: s.steps.filter((st) => st.tempId !== tempId).map((st, i) => ({ ...st, order: i })),
@@ -86,7 +137,7 @@ export const useAuthorStore = create<AuthorState>((set, get) => ({
   setPattern: (pattern) => set({ pattern }),
 
   save: async () => {
-    const { name, pattern, steps, context } = get();
+    const { name, pattern, steps, context, editingId } = get();
     if (!context) {
       set({ error: { kind: 'unknown', message: 'No page context to save against' } });
       return;
@@ -111,7 +162,9 @@ export const useAuthorStore = create<AuthorState>((set, get) => ({
     };
 
     try {
-      const result = await portClient.request('walkthrough.save', payload);
+      const result = editingId
+        ? await portClient.request('walkthrough.update', { ...payload, id: editingId })
+        : await portClient.request('walkthrough.save', payload);
       set({ saveStatus: 'saved', savedOffline: !result.synced });
     } catch (err) {
       set({ saveStatus: 'idle', error: err as ApiError });
@@ -124,6 +177,7 @@ export const useAuthorStore = create<AuthorState>((set, get) => ({
       steps: [],
       name: '',
       pattern: '',
+      editingId: null,
       saveStatus: 'idle',
       savedOffline: false,
       error: null,

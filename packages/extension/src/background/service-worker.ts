@@ -13,13 +13,7 @@ import {
   type WorkerEvent,
 } from '../shared/messages';
 import { toPattern } from '../lib/path-pattern';
-import {
-  playerKey,
-  walkthroughKey,
-  type PlayerSession,
-  type PlayerStep,
-  type PlayerWalkthrough,
-} from '../shared/player';
+import { walkthroughKey, type PlayerStep, type PlayerWalkthrough } from '../shared/player';
 import {
   enqueue,
   readMirror,
@@ -153,6 +147,12 @@ async function route(req: IncomingRequest): Promise<unknown> {
       return listWalkthroughs();
     case 'walkthrough.play':
       return playWalkthrough(req.payload as { id: string } | undefined);
+    case 'walkthrough.get':
+      return getWalkthrough(req.payload as { id: string } | undefined);
+    case 'walkthrough.update':
+      return updateWalkthrough(req.payload as (SaveWalkthroughInput & { id: string }) | undefined);
+    case 'walkthrough.delete':
+      return deleteWalkthrough(req.payload as { id: string } | undefined);
     default:
       throw new ApiCallError({ kind: 'unknown', message: 'Unknown request' });
   }
@@ -396,13 +396,78 @@ async function playWalkthrough(input: { id: string } | undefined): Promise<{ ok:
   const walkthrough = await loadForPlay(input.id, origin.origin);
   await chrome.storage.local.set({ [walkthroughKey(walkthrough.id)]: walkthrough });
 
-  // Explicit play from the panel always (re)starts at step 1 — one run at a time.
-  // (Refresh/navigation resume still works via the index the CS persists as it advances.)
-  await chrome.storage.local.set({
-    [playerKey(origin.origin)]: { id: walkthrough.id, stepIndex: 0 } satisfies PlayerSession,
-  });
+  // The content script owns progress (in localStorage, so it survives reloads);
+  // we just hand off the id. Explicit play always (re)starts at step 1.
+  await chrome.tabs.sendMessage(tab.id, { type: 'player.start', id: walkthrough.id });
+  return { ok: true };
+}
 
-  await chrome.tabs.sendMessage(tab.id, { type: 'player.start' });
+/** Load a full walkthrough for editing (backend, with cache/mirror fallback). */
+async function getWalkthrough(
+  input: { id: string } | undefined,
+): Promise<{ walkthrough: PlayerWalkthrough }> {
+  if (!input?.id) throw new ApiCallError({ kind: 'validation', message: 'No walkthrough selected' });
+  const tab = await activeTab();
+  const origin = httpOrigin(tab?.url);
+  if (!origin) {
+    throw new ApiCallError({ kind: 'unknown', message: "Open the walkthrough's site in a tab first" });
+  }
+  return { walkthrough: await loadForPlay(input.id, origin.origin) };
+}
+
+/** Update an existing walkthrough (PUT); for a not-yet-synced `local:` one,
+ * amend the mirror + its queued payload instead. */
+async function updateWalkthrough(
+  input: (SaveWalkthroughInput & { id: string }) | undefined,
+): Promise<{ walkthrough: SavedWalkthrough; synced: boolean }> {
+  if (!input?.id) throw new ApiCallError({ kind: 'validation', message: 'Nothing to update' });
+  const { id, ...body } = input;
+
+  if (id.startsWith('local:')) {
+    await upsertMirror(body.origin, {
+      id,
+      name: body.name,
+      origin: body.origin,
+      pathPattern: body.pathPattern,
+      steps: body.steps,
+      version: 1,
+      syncStatus: 'pending',
+      updatedAt: Date.now(),
+    });
+    const queue = await readQueue();
+    await writeQueue(queue.map((q) => (q.tempId === id ? { tempId: id, payload: body } : q)));
+    return {
+      walkthrough: { id, name: body.name, origin: body.origin, pathPattern: body.pathPattern, version: 1 },
+      synced: false,
+    };
+  }
+
+  const saved = await apiFetch<BackendWalkthrough>(
+    `/walkthroughs/${id}`,
+    { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    { auth: true },
+  );
+  await upsertMirror(saved.origin, toMirrorEntry(saved, 'synced'));
+  return { walkthrough: summaryOf(saved), synced: true };
+}
+
+/** Delete a walkthrough (DELETE); for a `local:` one, just drop it from the
+ * mirror + queue. */
+async function deleteWalkthrough(input: { id: string } | undefined): Promise<{ ok: true }> {
+  if (!input?.id) throw new ApiCallError({ kind: 'validation', message: 'No walkthrough selected' });
+  const { id } = input;
+  const origin = httpOrigin((await activeTab())?.url);
+
+  if (id.startsWith('local:')) {
+    if (origin) await removeMirrorEntry(origin.origin, id);
+    const queue = await readQueue();
+    await writeQueue(queue.filter((q) => q.tempId !== id));
+    return { ok: true };
+  }
+
+  await apiFetch<unknown>(`/walkthroughs/${id}`, { method: 'DELETE' }, { auth: true });
+  if (origin) await removeMirrorEntry(origin.origin, id);
+  await chrome.storage.local.remove(walkthroughKey(id));
   return { ok: true };
 }
 

@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useAuthorStore } from '../store/use-author-store';
+import { useAppStore } from '../store/use-app-store';
 import { ADVANCE_TRIGGER_KINDS, type AdvanceTriggerKind, type DraftStep } from '../content/targeting/types';
 import type { ApiError } from '../shared/messages';
 
@@ -23,10 +24,14 @@ function bannerMessage(error: ApiError | null): string | null {
   }
 }
 
-/** Short, human label for a captured step's target. */
+/** Short, human label for a captured step's target (descriptors may be partial). */
 function targetLabel(step: DraftStep): string {
-  const { attrs, text } = step.target;
-  return attrs.selector ?? attrs.testId ?? (text.accessibleName ? `"${text.accessibleName}"` : text.tag);
+  const t = step.target;
+  return (
+    t?.attrs?.selector ??
+    t?.attrs?.testId ??
+    (t?.text?.accessibleName ? `"${t.text.accessibleName}"` : (t?.text?.tag ?? 'element'))
+  );
 }
 
 /** A trigger kind is offered only when the captured element supports it. */
@@ -45,12 +50,14 @@ export function AuthorScreen(): JSX.Element {
   const pattern = useAuthorStore((s) => s.pattern);
   const saveStatus = useAuthorStore((s) => s.saveStatus);
   const savedOffline = useAuthorStore((s) => s.savedOffline);
+  const editingId = useAuthorStore((s) => s.editingId);
   const error = useAuthorStore((s) => s.error);
   const {
     loadContext,
     start,
     stop,
     updateStep,
+    moveStep,
     removeStep,
     setName,
     setPattern,
@@ -59,16 +66,22 @@ export function AuthorScreen(): JSX.Element {
   } = useAuthorStore.getState();
 
   useEffect(() => {
-    void loadContext();
-  }, [loadContext]);
+    // Editing loads its own context; only fetch the active tab for fresh authoring.
+    if (!editingId) void loadContext();
+  }, [editingId, loadContext]);
 
   if (saveStatus === 'saved') {
+    const wasEditing = editingId !== null;
     return (
       <div className="flex flex-col items-center gap-4 py-8 text-center">
         <div
           className={`text-sm font-semibold ${savedOffline ? 'text-amber-700' : 'text-emerald-700'}`}
         >
-          {savedOffline ? 'Saved locally — sync pending' : 'Walkthrough saved ✓'}
+          {savedOffline
+            ? 'Saved locally — sync pending'
+            : wasEditing
+              ? 'Walkthrough updated ✓'
+              : 'Walkthrough saved ✓'}
         </div>
         <p className="text-xs text-slate-500">
           {savedOffline
@@ -79,11 +92,12 @@ export function AuthorScreen(): JSX.Element {
           type="button"
           onClick={() => {
             reset();
-            void loadContext();
+            if (wasEditing) useAppStore.getState().setMode('home');
+            else void loadContext();
           }}
           className="rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800"
         >
-          Record another
+          {wasEditing ? 'Done' : 'Record another'}
         </button>
       </div>
     );
@@ -145,13 +159,33 @@ export function AuthorScreen(): JSX.Element {
             <li key={step.tempId} className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
               <div className="mb-2 flex items-center justify-between">
                 <span className="text-xs font-semibold text-slate-500">Step {i + 1}</span>
-                <button
-                  type="button"
-                  onClick={() => removeStep(step.tempId)}
-                  className="text-xs text-slate-400 hover:text-red-600"
-                >
-                  Remove
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => moveStep(step.tempId, -1)}
+                    disabled={i === 0}
+                    aria-label="Move step up"
+                    className="text-slate-400 hover:text-slate-700 disabled:opacity-30"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => moveStep(step.tempId, 1)}
+                    disabled={i === steps.length - 1}
+                    aria-label="Move step down"
+                    className="text-slate-400 hover:text-slate-700 disabled:opacity-30"
+                  >
+                    ↓
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeStep(step.tempId)}
+                    className="text-xs text-slate-400 hover:text-red-600"
+                  >
+                    Remove
+                  </button>
+                </div>
               </div>
               <p className="mb-2 truncate font-mono text-[11px] text-slate-400" title={targetLabel(step)}>
                 {targetLabel(step)}
@@ -220,7 +254,7 @@ export function AuthorScreen(): JSX.Element {
             disabled={saveStatus === 'saving'}
             className="mt-1 rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
           >
-            {saveStatus === 'saving' ? 'Saving…' : 'Save walkthrough'}
+            {saveStatus === 'saving' ? 'Saving…' : editingId ? 'Save changes' : 'Save walkthrough'}
           </button>
         </div>
       )}

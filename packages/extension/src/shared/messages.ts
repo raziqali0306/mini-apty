@@ -1,4 +1,5 @@
 import type { AdvanceTriggerKind, DraftStep, TargetDescriptor } from '../content/targeting/types';
+import type { PlayerWalkthrough } from './player';
 
 /**
  * The typed contract between the side panel and the service worker. The panel
@@ -91,6 +92,9 @@ export interface RpcPayloadMap {
   'walkthrough.save': SaveWalkthroughInput;
   'walkthrough.list': undefined;
   'walkthrough.play': { id: string };
+  'walkthrough.get': { id: string };
+  'walkthrough.update': SaveWalkthroughInput & { id: string };
+  'walkthrough.delete': { id: string };
 }
 
 /** Success results, keyed by RPC type. */
@@ -106,6 +110,9 @@ export interface RpcResultMap {
   'walkthrough.save': { walkthrough: SavedWalkthrough; synced: boolean };
   'walkthrough.list': WalkthroughListResult;
   'walkthrough.play': { ok: true };
+  'walkthrough.get': { walkthrough: PlayerWalkthrough };
+  'walkthrough.update': { walkthrough: SavedWalkthrough; synced: boolean };
+  'walkthrough.delete': { ok: true };
 }
 
 export type RpcType = keyof RpcResultMap;
@@ -121,7 +128,7 @@ export type WorkerEvent =
 export type ContentCommand =
   | { type: 'author.arm' }
   | { type: 'author.disarm' }
-  | { type: 'player.start' }
+  | { type: 'player.start'; id: string }
   | { type: 'player.stop' };
 
 /** Content script → worker (via chrome.runtime.sendMessage). */

@@ -1,5 +1,5 @@
 import { initAffordance, arm, disarm } from './overlay/affordance';
-import { initPlayer, startPlayerFromStorage, stopPlayer } from './player';
+import { initPlayer, startPlayerFromStorage, beginPlay, stopPlayer } from './player';
 import type { ContentCommand } from '../shared/messages';
 import type { DraftStep } from './targeting/types';
 
@@ -54,9 +54,8 @@ if (shadowRoot) {
         disarm();
         break;
       case 'player.start':
-        // One run at a time: end any current run, then start the clicked one.
-        stopPlayer();
-        void startPlayerFromStorage();
+        // One run at a time: end any current run, then start the clicked one fresh.
+        beginPlay(command.id);
         break;
       case 'player.stop':
         stopPlayer();
