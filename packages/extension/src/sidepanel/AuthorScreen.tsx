@@ -29,6 +29,13 @@ function targetLabel(step: DraftStep): string {
   return attrs.selector ?? attrs.testId ?? (text.accessibleName ? `"${text.accessibleName}"` : text.tag);
 }
 
+/** A trigger kind is offered only when the captured element supports it. */
+function isKindSupported(step: DraftStep, kind: AdvanceTriggerKind): boolean {
+  if (kind === 'click-target') return step.capabilities.clickTarget;
+  if (kind === 'input-change') return step.capabilities.inputChange;
+  return true; // next-button always works
+}
+
 export function AuthorScreen(): JSX.Element {
   const recording = useAuthorStore((s) => s.recording);
   const starting = useAuthorStore((s) => s.starting);
@@ -171,11 +178,15 @@ export function AuthorScreen(): JSX.Element {
                   }
                   className="rounded-md border border-slate-300 px-2 py-1 text-sm"
                 >
-                  {ADVANCE_TRIGGER_KINDS.map((kind) => (
-                    <option key={kind} value={kind}>
-                      {TRIGGER_LABELS[kind]}
-                    </option>
-                  ))}
+                  {ADVANCE_TRIGGER_KINDS.map((kind) => {
+                    const supported = isKindSupported(step, kind);
+                    return (
+                      <option key={kind} value={kind} disabled={!supported}>
+                        {TRIGGER_LABELS[kind]}
+                        {supported ? '' : ' (not available)'}
+                      </option>
+                    );
+                  })}
                 </select>
               </label>
             </li>

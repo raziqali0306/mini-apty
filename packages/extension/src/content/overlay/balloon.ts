@@ -11,6 +11,8 @@ export interface BalloonControls {
   title: string;
   description: string;
   canPrev: boolean;
+  /** Hide the Next button (e.g. click-target advances by interacting with the page). */
+  showNext: boolean;
   nextLabel: string;
   hint?: string;
   onPrev: () => void;
@@ -71,6 +73,7 @@ export function showBalloon(target: Element | null, c: BalloonControls): void {
   counterEl.textContent = `${c.index + 1} / ${c.total}`;
   prevBtn.disabled = !c.canPrev;
   nextBtn.textContent = c.nextLabel;
+  nextBtn.style.display = c.showNext ? '' : 'none';
 
   prevBtn.onclick = c.onPrev;
   nextBtn.onclick = c.onNext;

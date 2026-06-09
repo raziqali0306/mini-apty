@@ -1,5 +1,6 @@
 import overlayCss from './overlay.css?inline';
 import { buildDescriptor } from '../targeting/descriptor';
+import { hasClickableTarget, hasEditableInput } from '../triggers';
 import type { DraftStep } from '../targeting/types';
 
 /**
@@ -80,6 +81,10 @@ function onClick(e: MouseEvent): void {
     description: '',
     advanceTrigger: 'next-button',
     target: buildDescriptor(el),
+    capabilities: {
+      clickTarget: hasClickableTarget(el),
+      inputChange: hasEditableInput(el),
+    },
   };
   onCapture?.(step);
   flash();

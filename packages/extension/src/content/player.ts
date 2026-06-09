@@ -94,6 +94,8 @@ function renderStep(): void {
         title: step.title,
         description: step.description,
         canPrev: active.index > 0,
+        // click-target advances by interacting with the page — no Next button.
+        showNext: step.advanceTrigger.kind !== 'click-target',
         nextLabel: isLast ? 'Finish' : 'Next',
         hint: triggerHint(step.advanceTrigger.kind),
         onPrev: prev,
@@ -115,8 +117,9 @@ function renderStep(): void {
         index: active.index,
         total: active.wt.steps.length,
         title: step.title,
-        description: step.description || "Couldn't find this step's element on the page.",
+        description: step.description || 'Loading this step…',
         canPrev: active.index > 0,
+        showNext: true, // never trap the user when the element is missing
         nextLabel: isLast ? 'Finish' : 'Skip',
         hint: 'Waiting for the element to appear…',
         onPrev: prev,
@@ -158,21 +161,14 @@ function attachTrigger(kind: AdvanceTriggerKind, target: Element): void {
     const handler = (): void => next();
     target.addEventListener('click', handler, true);
     triggerCleanup = () => target.removeEventListener('click', handler, true);
-  } else if (kind === 'input-change') {
-    const handler = (): void => next();
-    target.addEventListener('input', handler, true);
-    target.addEventListener('change', handler, true);
-    triggerCleanup = () => {
-      target.removeEventListener('input', handler, true);
-      target.removeEventListener('change', handler, true);
-    };
   }
-  // 'next-button' has no page trigger — the balloon's Next handles it.
+  // 'next-button' and 'input-change' advance via the balloon's Next button — no
+  // page listener (input-change must not advance on every keystroke).
 }
 
 function triggerHint(kind: AdvanceTriggerKind): string | undefined {
   if (kind === 'click-target') return 'Click the highlighted element to continue.';
-  if (kind === 'input-change') return 'Change the highlighted field to continue.';
+  if (kind === 'input-change') return 'Fill in the field, then click Next.';
   return undefined;
 }
 
@@ -221,14 +217,23 @@ function patchHistory(): void {
   window.addEventListener('popstate', fire);
 }
 
-/** On any SPA navigation, re-evaluate the session against the new path. */
+/**
+ * On SPA navigation: if a walkthrough is active, keep its progress and just
+ * re-resolve the current step on the new view (the retry/poll waits for a
+ * dynamically-loaded element to appear) — a guided flow may legitimately span
+ * routes, so we don't gate mid-flow on `pathPattern`. With no active play, fall
+ * back to the persisted session for this page.
+ */
 function onLocationChange(): void {
   clearPoll();
   clearTrigger();
   clearObserver();
-  hideBalloon();
-  active = null;
   anchoredEl = null;
+  if (active) {
+    renderStep();
+    return;
+  }
+  hideBalloon();
   void startPlayerFromStorage();
 }
 

@@ -49,13 +49,21 @@ export interface TargetDescriptor {
   capturedUrl: string;
 }
 
+/** Which advance triggers the captured element supports (author-time gating). */
+export interface StepCapabilities {
+  clickTarget: boolean;
+  inputChange: boolean;
+}
+
 /** A step as captured/edited in the panel before save. */
 export interface DraftStep {
   tempId: string;
   order: number;
   title: string;
   description: string;
-  /** v1: the trigger fires on the captured element itself. */
+  /** The trigger fires on the captured element itself (events bubble from descendants). */
   advanceTrigger: AdvanceTriggerKind;
   target: TargetDescriptor;
+  /** Author-time only — not persisted to the backend. */
+  capabilities: StepCapabilities;
 }

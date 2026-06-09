@@ -396,10 +396,10 @@ async function playWalkthrough(input: { id: string } | undefined): Promise<{ ok:
   const walkthrough = await loadForPlay(input.id, origin.origin);
   await chrome.storage.local.set({ [walkthroughKey(walkthrough.id)]: walkthrough });
 
-  const existing = await getSession(origin.origin);
-  const stepIndex = existing?.id === walkthrough.id ? existing.stepIndex : 0;
+  // Explicit play from the panel always (re)starts at step 1 — one run at a time.
+  // (Refresh/navigation resume still works via the index the CS persists as it advances.)
   await chrome.storage.local.set({
-    [playerKey(origin.origin)]: { id: walkthrough.id, stepIndex } satisfies PlayerSession,
+    [playerKey(origin.origin)]: { id: walkthrough.id, stepIndex: 0 } satisfies PlayerSession,
   });
 
   await chrome.tabs.sendMessage(tab.id, { type: 'player.start' });
@@ -441,12 +441,6 @@ async function getCachedWalkthrough(id: string): Promise<PlayerWalkthrough | und
   const key = walkthroughKey(id);
   const result = await chrome.storage.local.get(key);
   return result[key] as PlayerWalkthrough | undefined;
-}
-
-async function getSession(origin: string): Promise<PlayerSession | undefined> {
-  const key = playerKey(origin);
-  const result = await chrome.storage.local.get(key);
-  return result[key] as PlayerSession | undefined;
 }
 
 /** Parse an http(s) tab URL into origin + path, or undefined for other schemes. */

@@ -54,6 +54,8 @@ if (shadowRoot) {
         disarm();
         break;
       case 'player.start':
+        // One run at a time: end any current run, then start the clicked one.
+        stopPlayer();
         void startPlayerFromStorage();
         break;
       case 'player.stop':
