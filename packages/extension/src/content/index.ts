@@ -1,8 +1,12 @@
+import { initAffordance, arm, disarm } from './overlay/affordance';
+import { initPlayer, startPlayerFromStorage, beginPlay, stopPlayer } from './player';
+import type { ContentCommand } from '../shared/messages';
+import type { DraftStep } from './targeting/types';
+
 /**
- * Content script — owns DOM access for this tab. It hosts the overlay inside a
- * closed Shadow DOM so host-page CSS/z-index/event handlers cannot break (or be
- * broken by) our UI. Capture listeners, the target resolver, and the
- * MutationObserver/polling loop attach here as features are built.
+ * Content script — owns DOM access for this tab. It hosts the author capture
+ * overlay and the player balloon inside a closed Shadow DOM so host-page
+ * CSS/z-index/event handlers cannot break (or be broken by) our UI.
  */
 
 const OVERLAY_HOST_ID = 'mini-apty-overlay-root';
@@ -12,7 +16,7 @@ function mountOverlayHost(): ShadowRoot | null {
 
   const host = document.createElement('div');
   host.id = OVERLAY_HOST_ID;
-  // Zero-footprint, top-most, non-interactive container; children opt back in.
+  // Zero-footprint, top-most container; children opt back into pointer events.
   host.style.cssText = [
     'position:fixed',
     'top:0',
@@ -31,6 +35,31 @@ function mountOverlayHost(): ShadowRoot | null {
 // Idempotent: re-injection (SPA navigations, double-inject) is a no-op.
 const shadowRoot = mountOverlayHost();
 if (shadowRoot) {
-  // Future: render hover affordance (author) / step balloon (player) here,
-  // with Tailwind styles scoped to this shadow root.
+  initAffordance(shadowRoot, (step: DraftStep) => {
+    void chrome.runtime.sendMessage({ type: 'author.captured', step });
+  });
+  initPlayer(shadowRoot);
+
+  // Resume an in-progress walkthrough after a refresh / navigation back.
+  void startPlayerFromStorage();
+
+  // Commands relayed from the service worker.
+  chrome.runtime.onMessage.addListener((message: unknown) => {
+    const command = message as ContentCommand;
+    switch (command.type) {
+      case 'author.arm':
+        arm();
+        break;
+      case 'author.disarm':
+        disarm();
+        break;
+      case 'player.start':
+        // One run at a time: end any current run, then start the clicked one fresh.
+        beginPlay(command.id);
+        break;
+      case 'player.stop':
+        stopPlayer();
+        break;
+    }
+  });
 }

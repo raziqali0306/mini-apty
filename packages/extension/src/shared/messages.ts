@@ -1,3 +1,6 @@
+import type { AdvanceTriggerKind, DraftStep, TargetDescriptor } from '../content/targeting/types';
+import type { PlayerWalkthrough } from './player';
+
 /**
  * The typed contract between the side panel and the service worker. The panel
  * sends correlated RPC requests over a single Port; the worker replies with a
@@ -25,6 +28,57 @@ export interface ApiError {
   fields?: Record<string, string[]>;
 }
 
+// ── Author / walkthrough payloads ───────────────────────────────────────────
+
+/** Derived from the active tab when authoring starts. */
+export interface AuthorContext {
+  origin: string;
+  path: string;
+  suggestedPattern: string;
+}
+
+/** A step in the shape the backend persists (trigger reuses the step element). */
+export interface WalkthroughStepInput {
+  order: number;
+  title: string;
+  description: string;
+  target: TargetDescriptor;
+  advanceTrigger: { kind: AdvanceTriggerKind };
+}
+
+export interface SaveWalkthroughInput {
+  name: string;
+  origin: string;
+  pathPattern: string;
+  steps: WalkthroughStepInput[];
+}
+
+export interface SavedWalkthrough {
+  id: string;
+  name: string;
+  origin: string;
+  pathPattern: string;
+  version: number;
+}
+
+/** Lightweight row for the Preview list. */
+export interface WalkthroughSummary {
+  id: string;
+  name: string;
+  pathPattern: string;
+  stepCount: number;
+  /** `pending` = saved locally but not yet synced to the backend. */
+  syncStatus: 'synced' | 'pending';
+}
+
+export interface WalkthroughListResult {
+  /** Null when the active tab isn't a normal http(s) page. */
+  context: { origin: string; path: string } | null;
+  walkthroughs: WalkthroughSummary[];
+}
+
+// ── Port RPC maps ───────────────────────────────────────────────────────────
+
 /** Request payloads, keyed by RPC type. */
 export interface RpcPayloadMap {
   ping: undefined;
@@ -32,6 +86,15 @@ export interface RpcPayloadMap {
   'auth.signup': Credentials;
   'auth.login': Credentials;
   'auth.logout': undefined;
+  'author.context': undefined;
+  'author.start': undefined;
+  'author.stop': undefined;
+  'walkthrough.save': SaveWalkthroughInput;
+  'walkthrough.list': undefined;
+  'walkthrough.play': { id: string };
+  'walkthrough.get': { id: string };
+  'walkthrough.update': SaveWalkthroughInput & { id: string };
+  'walkthrough.delete': { id: string };
 }
 
 /** Success results, keyed by RPC type. */
@@ -41,9 +104,32 @@ export interface RpcResultMap {
   'auth.signup': { user: SessionUser };
   'auth.login': { user: SessionUser };
   'auth.logout': Record<string, never>;
+  'author.context': AuthorContext;
+  'author.start': { ok: true };
+  'author.stop': { ok: true };
+  'walkthrough.save': { walkthrough: SavedWalkthrough; synced: boolean };
+  'walkthrough.list': WalkthroughListResult;
+  'walkthrough.play': { ok: true };
+  'walkthrough.get': { walkthrough: PlayerWalkthrough };
+  'walkthrough.update': { walkthrough: SavedWalkthrough; synced: boolean };
+  'walkthrough.delete': { ok: true };
 }
 
 export type RpcType = keyof RpcResultMap;
 
 /** Worker → panel pushes that aren't replies to a request. */
-export type WorkerEvent = { type: 'auth.expired' };
+export type WorkerEvent =
+  | { type: 'auth.expired' }
+  | { type: 'author.captured'; step: DraftStep };
+
+// ── Content-script ↔ worker (one-shot runtime messages, not the Port) ────────
+
+/** Worker → content script (via chrome.tabs.sendMessage). */
+export type ContentCommand =
+  | { type: 'author.arm' }
+  | { type: 'author.disarm' }
+  | { type: 'player.start'; id: string }
+  | { type: 'player.stop' };
+
+/** Content script → worker (via chrome.runtime.sendMessage). */
+export type ContentEvent = { type: 'author.captured'; step: DraftStep };

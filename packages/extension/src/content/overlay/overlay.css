@@ -1,0 +1,138 @@
+/*
+ * Overlay styles, adopted into the closed shadow root so they're fully isolated
+ * from the host page. Kept as scoped plain CSS (not Tailwind utilities) so the
+ * content script injected on every page stays tiny — the shadow root is what
+ * satisfies the style-isolation requirement.
+ */
+.ma-highlight {
+  position: fixed;
+  z-index: 2147483647;
+  pointer-events: none;
+  box-sizing: border-box;
+  border: 2px solid #2563eb;
+  background: rgba(37, 99, 235, 0.12);
+  border-radius: 4px;
+  transition:
+    top 60ms ease-out,
+    left 60ms ease-out,
+    width 60ms ease-out,
+    height 60ms ease-out;
+}
+
+.ma-highlight.ma-flash {
+  border-color: #16a34a;
+  background: rgba(22, 163, 74, 0.2);
+}
+
+.ma-label {
+  position: fixed;
+  z-index: 2147483647;
+  pointer-events: none;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #2563eb;
+  color: #fff;
+  font: 11px/1.5 ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+
+/* ── player ──────────────────────────────────────────────────────────────── */
+.ma-ring {
+  position: fixed;
+  z-index: 2147483646;
+  pointer-events: none;
+  border: 2px solid #2563eb;
+  border-radius: 6px;
+  box-shadow: 0 0 0 9999px rgba(15, 23, 42, 0.08);
+  transition:
+    top 80ms ease-out,
+    left 80ms ease-out,
+    width 80ms ease-out,
+    height 80ms ease-out;
+}
+
+.ma-balloon {
+  position: fixed;
+  z-index: 2147483647;
+  pointer-events: auto;
+  box-sizing: border-box;
+  width: 290px;
+  padding: 12px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+  color: #0f172a;
+  box-shadow: 0 10px 30px rgba(2, 6, 23, 0.25);
+  font: 13px/1.5 ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+
+.ma-balloon-title {
+  margin-right: 18px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.ma-balloon-desc {
+  margin-top: 4px;
+  color: #475569;
+  white-space: pre-wrap;
+}
+
+.ma-balloon-hint {
+  margin-top: 8px;
+  font-size: 11px;
+  color: #2563eb;
+}
+
+.ma-balloon-foot {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ma-counter {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.ma-btn {
+  appearance: none;
+  padding: 5px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  color: #0f172a;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.ma-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.ma-btn-primary {
+  border-color: #2563eb;
+  background: #2563eb;
+  color: #fff;
+}
+
+.ma-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}

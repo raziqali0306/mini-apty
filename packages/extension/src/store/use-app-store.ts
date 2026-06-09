@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 
-/** UI mode for the side panel. Drives which view is shown. */
-export type Mode = 'idle' | 'author' | 'player';
+/** Which view the authenticated side panel is showing. */
+export type Mode = 'home' | 'author' | 'preview';
 
 interface AppState {
   mode: Mode;
@@ -9,11 +9,10 @@ interface AppState {
 }
 
 /**
- * Presentational state lives here; side effects (Port RPCs, API calls) belong
- * in dedicated hooks/services so views stay pure. Auth + walkthrough slices are
- * added as features land.
+ * Presentational navigation state for the panel. Side effects (Port RPCs, API
+ * calls) live in dedicated hooks/stores so views stay pure.
  */
 export const useAppStore = create<AppState>((set) => ({
-  mode: 'idle',
+  mode: 'home',
   setMode: (mode) => set({ mode }),
 }));
