@@ -29,6 +29,12 @@ const SLOW_POLL_MS = 1000;
 const RESUME_PROBE_MS = 8000;
 const LOCATION_CHANGE = 'mini-apty:locationchange';
 
+/** Flip to true to surface the player's step/resolve debug logs. */
+const DEBUG = false;
+const log = (...args: unknown[]): void => {
+  if (DEBUG) console.log('[mini-apty][player]', ...args);
+};
+
 interface ActivePlay {
   wt: PlayerWalkthrough;
   index: number;
@@ -157,6 +163,7 @@ function renderStep(): void {
 
   const tick = (): void => {
     if (!active) return;
+    log('current step', { index: active.index, title: step.title, target: step.target });
     const found = safeResolve(step.target);
 
     if (found) {
@@ -332,6 +339,7 @@ function onLocationChange(): void {
 /** Resolution must never crash the host page — treat any failure as "not found". */
 function safeResolve(target: PlayerStep['target']): Element | null {
   try {
+    log('resolving target', target);
     return resolveElement(target);
   } catch (err) {
     console.warn('[mini-apty] resolver error', err);
