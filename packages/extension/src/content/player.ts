@@ -15,10 +15,12 @@ import type { AdvanceTriggerKind } from './targeting/types';
  * persists progress so a refresh/reroute resumes at the right step.
  *
  * Progress is kept in **localStorage** (synchronous, so it survives a full-page
- * navigation a click may trigger), and a walkthrough resumes wherever its
- * current step's element appears — not by matching a path — so guided flows can
- * span routes. A MutationObserver re-anchors across re-renders; patched history
- * APIs re-evaluate on SPA route changes.
+ * navigation a click may trigger). Resume is **page-aware**: each step records
+ * the path it was authored on (`target.capturedUrl`), so after a reload/route
+ * change we land on the step that belongs to the current page — even jumping
+ * forward when the user advanced the flow by clicking the page's own link
+ * (e.g. a "Book a demo" button that navigates). A MutationObserver re-anchors
+ * across re-renders; patched history APIs re-evaluate on SPA route changes.
  */
 
 const FAST_RETRY_MS = 400;
@@ -47,33 +49,85 @@ export function initPlayer(root: ShadowRoot): void {
   window.addEventListener(LOCATION_CHANGE, onLocationChange);
 }
 
-/** Start a freshly-seeded play (panel click) — the worker hands in the id. */
-export function beginPlay(id: string): void {
+/**
+ * Start a freshly-seeded play (panel click) — the worker hands in the id. An
+ * explicit "play" always starts at step 1, regardless of the current page.
+ */
+export async function beginPlay(id: string): Promise<void> {
   stopPlayer();
+  const wt = await readWalkthrough(id);
+  if (!wt || wt.steps.length === 0) return;
   writeProgress({ id, stepIndex: 0 });
-  void startPlayerFromStorage();
+  active = { wt, index: 0 };
+  renderStep();
 }
 
 /**
- * Resume from persisted progress (page load / navigation). Resumes only if the
- * current step's element appears on this page within a budget — so it follows a
- * flow across routes and stays quiet on unrelated pages.
+ * Resume from persisted progress (page load / navigation). Page-aware: when the
+ * steps carry captured paths, resume at the step that belongs to *this* page
+ * (jumping ahead if the user navigated forward by clicking a link); stay quiet
+ * on pages outside the flow. For older captures with no path info, fall back to
+ * resuming at the saved step only if its element appears here within a budget.
  */
 export async function startPlayerFromStorage(): Promise<void> {
+  if (active) return; // a run is already in progress
   const progress = readProgress();
   if (!progress) return;
   const wt = await readWalkthrough(progress.id);
-  if (!wt) return;
-  const index = clamp(progress.stepIndex, wt.steps.length);
-  const step = wt.steps[index];
+  if (!wt || wt.steps.length === 0) return;
+  const saved = clamp(progress.stepIndex, wt.steps.length);
+
+  const paths = wt.steps.map(stepPath);
+  const hasPageInfo = paths.some((p) => p !== null);
+
+  if (hasPageInfo) {
+    const index = resumeIndexForPage(paths, saved);
+    if (index === null) return; // this page isn't part of the flow → stay quiet
+    active = { wt, index };
+    if (index !== saved) writeProgress({ id: wt.id, stepIndex: index });
+    renderStep();
+    return;
+  }
+
+  // No captured-path info — resume at the saved step only if it shows up here.
+  const step = wt.steps[saved];
   if (!step) {
     clearProgress();
     return;
   }
   const found = await probeForElement(step.target, RESUME_PROBE_MS);
-  if (!found || active) return; // not here (yet), or another run started meanwhile
-  active = { wt, index };
+  if (!found || active) return;
+  active = { wt, index: saved };
   renderStep();
+}
+
+/** Captured path for a step, normalized; null when the capture predates it. */
+function stepPath(step: PlayerStep): string | null {
+  const url = step.target?.capturedUrl;
+  if (!url) return null;
+  try {
+    return normalizePath(new URL(url).pathname);
+  } catch {
+    return null;
+  }
+}
+
+/** Trailing-slash-insensitive pathname (`/x/` ≡ `/x`); root stays `/`. */
+function normalizePath(path: string): string {
+  return path.length > 1 && path.endsWith('/') ? path.slice(0, -1) : path;
+}
+
+/**
+ * Pick the step to resume on the current page from the per-step captured paths:
+ * the saved step if it's here, else the nearest step ahead (navigated forward),
+ * else the nearest behind (navigated back), else `null` (page not in the flow).
+ */
+function resumeIndexForPage(paths: (string | null)[], saved: number): number | null {
+  const current = normalizePath(location.pathname);
+  if (paths[saved] === current) return saved;
+  for (let i = saved + 1; i < paths.length; i += 1) if (paths[i] === current) return i;
+  for (let i = saved - 1; i >= 0; i -= 1) if (paths[i] === current) return i;
+  return null;
 }
 
 export function stopPlayer(): void {
@@ -120,7 +174,6 @@ function renderStep(): void {
         canPrev: active.index > 0,
         showNext: step.advanceTrigger.kind !== 'click-target',
         nextLabel: isLast ? 'Finish' : 'Next',
-        hint: triggerHint(step.advanceTrigger.kind),
         onPrev: prev,
         onNext: next,
         onClose: finish,
@@ -185,12 +238,6 @@ function attachTrigger(kind: AdvanceTriggerKind, target: Element): void {
   }
   // 'next-button' and 'input-change' advance via the balloon's Next button — no
   // page listener (input-change must not advance on every keystroke).
-}
-
-function triggerHint(kind: AdvanceTriggerKind): string | undefined {
-  if (kind === 'click-target') return 'Click the highlighted element to continue.';
-  if (kind === 'input-change') return 'Fill in the field, then click Next.';
-  return undefined;
 }
 
 /** Scroll an off-screen element into view once (e.g. a step at the page bottom). */
