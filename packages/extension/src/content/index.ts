@@ -55,7 +55,7 @@ if (shadowRoot) {
         break;
       case 'player.start':
         // One run at a time: end any current run, then start the clicked one fresh.
-        beginPlay(command.id);
+        void beginPlay(command.id);
         break;
       case 'player.stop':
         stopPlayer();

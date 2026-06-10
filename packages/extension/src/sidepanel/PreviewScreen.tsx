@@ -58,13 +58,34 @@ export function PreviewScreen(): JSX.Element {
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [navConfirm, setNavConfirm] = useState<{ id: string; path: string } | null>(null);
 
   async function play(id: string): Promise<void> {
     setNotice(null);
+    setNavConfirm(null);
     setPlayingId(id);
     try {
-      await portClient.request('walkthrough.play', { id });
-      setNotice({ kind: 'ok', text: 'Started — follow the balloon on the page.' });
+      const res = await portClient.request('walkthrough.play', { id });
+      if (res.started) {
+        setNotice({ kind: 'ok', text: 'Started — follow the balloon on the page.' });
+      } else if (res.navigateTo) {
+        // The walkthrough lives on another path — confirm before navigating.
+        setNavConfirm({ id, path: res.navigateTo.path });
+      }
+    } catch (err) {
+      setNotice({ kind: 'err', text: errorMessage(err as ApiError) });
+    } finally {
+      setPlayingId(null);
+    }
+  }
+
+  async function playHere(id: string): Promise<void> {
+    setNotice(null);
+    setNavConfirm(null);
+    setPlayingId(id);
+    try {
+      await portClient.request('walkthrough.play', { id, navigate: true });
+      setNotice({ kind: 'ok', text: 'Opening the walkthrough’s page…' });
     } catch (err) {
       setNotice({ kind: 'err', text: errorMessage(err as ApiError) });
     } finally {
@@ -144,6 +165,32 @@ export function PreviewScreen(): JSX.Element {
           }`}
         >
           {notice.text}
+        </div>
+      )}
+
+      {navConfirm && (
+        <div className="flex flex-col gap-2 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-800">
+          <span>
+            This walkthrough runs on <span className="font-mono">{navConfirm.path}</span>. Go there and
+            start it?
+          </span>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => void playHere(navConfirm.id)}
+              disabled={playingId === navConfirm.id}
+              className="rounded-md bg-sky-600 px-3 py-1 text-xs font-medium text-white hover:bg-sky-700 disabled:opacity-60"
+            >
+              Go &amp; start
+            </button>
+            <button
+              type="button"
+              onClick={() => setNavConfirm(null)}
+              className="rounded-md border border-slate-300 px-3 py-1 text-xs font-medium hover:bg-slate-100"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       )}
 
