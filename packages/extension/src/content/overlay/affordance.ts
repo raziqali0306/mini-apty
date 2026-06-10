@@ -4,15 +4,19 @@ import { hasClickableTarget, hasEditableInput } from '../triggers';
 import type { DraftStep } from '../targeting/types';
 
 /**
- * Author-mode capture affordance. While armed it highlights the hovered element
- * and, on click, swallows the click (capture phase + stopImmediatePropagation so
- * the host page never reacts) and emits a captured step.
+ * Author-mode capture affordance. While armed it lays a transparent full-viewport
+ * shield over the page so every pointer event is ours — the host page never
+ * reacts — and resolves the element *under the cursor* geometrically with
+ * `elementsFromPoint`. That geometry-based hit test (rather than `event.target`)
+ * is what lets us highlight and capture elements that don't dispatch mouse events
+ * themselves, e.g. `disabled` inputs.
  */
 
 const OVERLAY_HOST_ID = 'mini-apty-overlay-root';
 const FLASH_MS = 300;
 
 let armed = false;
+let shield: HTMLDivElement | undefined;
 let highlight: HTMLDivElement | undefined;
 let label: HTMLDivElement | undefined;
 let onCapture: ((step: DraftStep) => void) | undefined;
@@ -24,6 +28,10 @@ export function initAffordance(root: ShadowRoot, captureHandler: (step: DraftSte
   sheet.replaceSync(overlayCss);
   root.adoptedStyleSheets = [...root.adoptedStyleSheets, sheet];
 
+  shield = document.createElement('div');
+  shield.className = 'ma-shield';
+  shield.style.display = 'none';
+
   highlight = document.createElement('div');
   highlight.className = 'ma-highlight';
   highlight.style.display = 'none';
@@ -32,47 +40,53 @@ export function initAffordance(root: ShadowRoot, captureHandler: (step: DraftSte
   label.className = 'ma-label';
   label.style.display = 'none';
 
-  root.append(highlight, label);
+  root.append(shield, highlight, label);
 }
 
 export function arm(): void {
-  if (armed) return;
+  if (armed || !shield) return;
   armed = true;
-  document.addEventListener('mousemove', onMove, true);
-  document.addEventListener('click', onClick, true);
-  document.documentElement.style.cursor = 'crosshair';
+  shield.style.display = 'block';
+  shield.addEventListener('mousemove', onMove, true);
+  shield.addEventListener('click', onClick, true);
 }
 
 export function disarm(): void {
   if (!armed) return;
   armed = false;
-  document.removeEventListener('mousemove', onMove, true);
-  document.removeEventListener('click', onClick, true);
-  document.documentElement.style.removeProperty('cursor');
+  shield?.removeEventListener('mousemove', onMove, true);
+  shield?.removeEventListener('click', onClick, true);
+  if (shield) shield.style.display = 'none';
   hide();
 }
 
 // ── internals ────────────────────────────────────────────────────────────────
 
-function targetOf(e: Event): Element | undefined {
-  const el = e.target;
-  if (!(el instanceof Element)) return undefined;
-  if (el.id === OVERLAY_HOST_ID) return undefined; // never select our own overlay
-  return el;
+/**
+ * Topmost host-page element at a viewport point, skipping our own overlay. Uses
+ * `elementsFromPoint` (pure geometry) so it returns elements that swallow mouse
+ * events — `disabled` inputs included — which `event.target` never would.
+ */
+function hostElementAt(x: number, y: number): Element | undefined {
+  for (const el of document.elementsFromPoint(x, y)) {
+    if (el.id === OVERLAY_HOST_ID) continue; // skip our shadow host (shield/ring)
+    return el;
+  }
+  return undefined;
 }
 
 function onMove(e: MouseEvent): void {
-  const el = targetOf(e);
+  const el = hostElementAt(e.clientX, e.clientY);
   if (el) showHighlight(el);
+  else hide();
 }
 
 function onClick(e: MouseEvent): void {
-  const el = targetOf(e);
-  if (!el) return;
-  // Swallow the selection click so the host page's handlers never fire.
+  // The shield already keeps the host page from reacting; belt-and-braces.
   e.preventDefault();
   e.stopPropagation();
-  e.stopImmediatePropagation();
+  const el = hostElementAt(e.clientX, e.clientY);
+  if (!el) return;
 
   const step: DraftStep = {
     tempId: uuid(),

@@ -4,6 +4,17 @@
  * content script injected on every page stays tiny — the shadow root is what
  * satisfies the style-isolation requirement.
  */
+/* Transparent capture layer: owns every pointer event while recording so the
+ * host page can't react, and lets us hit-test the element under the cursor. */
+.ma-shield {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483646;
+  pointer-events: auto;
+  background: transparent;
+  cursor: crosshair;
+}
+
 .ma-highlight {
   position: fixed;
   z-index: 2147483647;

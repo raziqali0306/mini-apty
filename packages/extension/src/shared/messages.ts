@@ -134,4 +134,7 @@ export type ContentCommand =
   | { type: 'player.stop' };
 
 /** Content script → worker (via chrome.runtime.sendMessage). */
-export type ContentEvent = { type: 'author.captured'; step: DraftStep };
+export type ContentEvent =
+  | { type: 'author.captured'; step: DraftStep }
+  /** Sent on (re)injection so the worker can re-arm recording after a refresh. */
+  | { type: 'content.ready' };

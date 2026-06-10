@@ -82,13 +82,29 @@ chrome.runtime.onConnect.addListener((port) => {
   port.onDisconnect.addListener(() => panelPorts.delete(port));
 });
 
-// Content script → worker: relay captured steps to the panel.
-chrome.runtime.onMessage.addListener((message: unknown) => {
+// Content script → worker: relay captured steps, and re-arm recording when a
+// page (re)injects its content script — e.g. after the author refreshes the host
+// page mid-recording, which would otherwise drop the capture overlay.
+chrome.runtime.onMessage.addListener((message: unknown, sender) => {
   const event = message as ContentEvent;
   if (event.type === 'author.captured') {
     broadcast({ type: 'author.captured', step: event.step });
+  } else if (event.type === 'content.ready') {
+    void reArmIfRecording(sender.tab?.id);
   }
 });
+
+/** Re-send `author.arm` to a freshly-loaded tab if it's the recording tab. */
+async function reArmIfRecording(tabId: number | undefined): Promise<void> {
+  if (tabId === undefined) return;
+  const session = await getAuthorSession();
+  if (!session?.recording || session.tabId !== tabId) return;
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: 'author.arm' });
+  } catch {
+    // Content script not listening yet — it re-announces on its next load.
+  }
+}
 
 function broadcast(event: WorkerEvent): void {
   for (const port of panelPorts) port.postMessage(event);

@@ -43,6 +43,10 @@ if (shadowRoot) {
   // Resume an in-progress walkthrough after a refresh / navigation back.
   void startPlayerFromStorage();
 
+  // Tell the worker we're live so it can re-arm recording if this tab was
+  // mid-capture before a refresh (the in-memory armed state is gone now).
+  void chrome.runtime.sendMessage({ type: 'content.ready' });
+
   // Commands relayed from the service worker.
   chrome.runtime.onMessage.addListener((message: unknown) => {
     const command = message as ContentCommand;

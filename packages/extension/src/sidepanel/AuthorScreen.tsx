@@ -70,6 +70,14 @@ export function AuthorScreen(): JSX.Element {
     if (!editingId) void loadContext();
   }, [editingId, loadContext]);
 
+  useEffect(() => {
+    // Leaving this screen (Back, Sign out, mode switch) must stop recording so the
+    // capture overlay doesn't linger on the host page after we've navigated away.
+    return () => {
+      if (useAuthorStore.getState().recording) void useAuthorStore.getState().stop();
+    };
+  }, []);
+
   if (saveStatus === 'saved') {
     const wasEditing = editingId !== null;
     return (
