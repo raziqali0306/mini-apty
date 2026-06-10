@@ -91,7 +91,7 @@ export interface RpcPayloadMap {
   'author.stop': undefined;
   'walkthrough.save': SaveWalkthroughInput;
   'walkthrough.list': undefined;
-  'walkthrough.play': { id: string };
+  'walkthrough.play': { id: string; navigate?: boolean };
   'walkthrough.get': { id: string };
   'walkthrough.update': SaveWalkthroughInput & { id: string };
   'walkthrough.delete': { id: string };
@@ -109,7 +109,9 @@ export interface RpcResultMap {
   'author.stop': { ok: true };
   'walkthrough.save': { walkthrough: SavedWalkthrough; synced: boolean };
   'walkthrough.list': WalkthroughListResult;
-  'walkthrough.play': { ok: true };
+  /** `started` true once playing; `navigateTo` set when the walkthrough lives on
+   * another path and the user must confirm navigating there first. */
+  'walkthrough.play': { started: boolean; navigateTo?: { url: string; path: string } };
   'walkthrough.get': { walkthrough: PlayerWalkthrough };
   'walkthrough.update': { walkthrough: SavedWalkthrough; synced: boolean };
   'walkthrough.delete': { ok: true };

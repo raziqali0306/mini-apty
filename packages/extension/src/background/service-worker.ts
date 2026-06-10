@@ -13,7 +13,12 @@ import {
   type WorkerEvent,
 } from '../shared/messages';
 import { toPattern } from '../lib/path-pattern';
-import { walkthroughKey, type PlayerStep, type PlayerWalkthrough } from '../shared/player';
+import {
+  pathMatchesPattern,
+  walkthroughKey,
+  type PlayerStep,
+  type PlayerWalkthrough,
+} from '../shared/player';
 import {
   enqueue,
   readMirror,
@@ -381,11 +386,16 @@ async function listWalkthroughs(): Promise<WalkthroughListResult> {
 }
 
 /**
- * Load a walkthrough, cache it for offline, seed/resume the player session for
- * the active tab's origin, and tell the content script to start. The CS reads
- * the session from storage (so a later refresh resumes without us).
+ * Load a walkthrough, cache it for offline, and start the player on the active
+ * tab. The list is per-origin, so the chosen walkthrough may belong to a
+ * different *path* (its steps target elements on another page). In that case we
+ * don't start blindly — we return `navigateTo` so the panel can ask the user to
+ * go there first; on confirm (`navigate: true`) we drive the tab there and start
+ * once it loads. The CS owns progress (localStorage), so refreshes still resume.
  */
-async function playWalkthrough(input: { id: string } | undefined): Promise<{ ok: true }> {
+async function playWalkthrough(
+  input: { id: string; navigate?: boolean } | undefined,
+): Promise<{ started: boolean; navigateTo?: { url: string; path: string } }> {
   if (!input?.id) throw new ApiCallError({ kind: 'validation', message: 'No walkthrough selected' });
   const tab = await activeTab();
   const origin = httpOrigin(tab?.url);
@@ -396,11 +406,80 @@ async function playWalkthrough(input: { id: string } | undefined): Promise<{ ok:
   const walkthrough = await loadForPlay(input.id, origin.origin);
   await chrome.storage.local.set({ [walkthroughKey(walkthrough.id)]: walkthrough });
 
-  // The content script owns progress (in localStorage, so it survives reloads);
-  // we just hand off the id. Explicit play always (re)starts at step 1.
+  const startPath = firstStepPath(walkthrough);
+  const currentPath = normalizePath(origin.path);
+  const onStartPage =
+    startPath === null ||
+    startPath === currentPath ||
+    pathMatchesPattern(walkthrough.pathPattern, currentPath);
+
+  // Off the walkthrough's start page and not yet confirmed → ask the panel.
+  if (!onStartPage && startPath !== null && !input.navigate) {
+    return { started: false, navigateTo: { url: `${origin.origin}${startPath}`, path: startPath } };
+  }
+
+  if (!onStartPage && startPath !== null && input.navigate) {
+    await navigateAndPlay(tab.id, `${origin.origin}${startPath}`, walkthrough.id);
+    return { started: true };
+  }
+
+  // Already on the right page — start immediately. Explicit play restarts at 1.
   await chrome.tabs.sendMessage(tab.id, { type: 'player.start', id: walkthrough.id });
-  return { ok: true };
+  return { started: true };
 }
+
+/** First step's authored path (normalized), or null for older captures. */
+function firstStepPath(wt: PlayerWalkthrough): string | null {
+  const url = wt.steps[0]?.target?.capturedUrl;
+  if (typeof url !== 'string' || !url) return null;
+  try {
+    return normalizePath(new URL(url).pathname);
+  } catch {
+    return null;
+  }
+}
+
+/** Trailing-slash-insensitive pathname (`/x/` ≡ `/x`); root stays `/`. */
+function normalizePath(path: string): string {
+  return path.length > 1 && path.endsWith('/') ? path.slice(0, -1) : path;
+}
+
+/** Drive the tab to `url`, wait for it to finish loading, then start the player. */
+async function navigateAndPlay(tabId: number, url: string, id: string): Promise<void> {
+  await chrome.tabs.update(tabId, { url });
+  await onceTabComplete(tabId, 20_000);
+  await startInTab(tabId, id);
+}
+
+/** Resolve when the tab reports `complete`, or after a timeout (proceed anyway). */
+function onceTabComplete(tabId: number, timeoutMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    const finish = (): void => {
+      chrome.tabs.onUpdated.removeListener(listener);
+      clearTimeout(timer);
+      resolve();
+    };
+    const listener = (changedId: number, info: chrome.tabs.TabChangeInfo): void => {
+      if (changedId === tabId && info.status === 'complete') finish();
+    };
+    chrome.tabs.onUpdated.addListener(listener);
+    const timer = setTimeout(finish, timeoutMs);
+  });
+}
+
+/** Send `player.start`, retrying briefly while the content script boots. */
+async function startInTab(tabId: number, id: string): Promise<void> {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      await chrome.tabs.sendMessage(tabId, { type: 'player.start', id });
+      return;
+    } catch {
+      await delay(300); // content script not injected/listening yet
+    }
+  }
+}
+
+const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Load a full walkthrough for editing (backend, with cache/mirror fallback). */
 async function getWalkthrough(
