@@ -167,10 +167,14 @@ binary doesn't run on Alpine/musl, our image base.)
 
 ## Resilience, isolation & error UX (extension)
 
-- **Network‑failure tolerance.** The **player works offline once loaded** — the full walkthrough is
-  cached in `chrome.storage.local`, so refresh/return and same‑walkthrough replay work with the
-  backend down; `walkthrough.play` falls back to the cached copy if the fetch fails. Reads in the
-  list/play paths degrade to a clear error state when there's nothing cached.
+- **Network‑failure tolerance (both directions).** *Reads:* the **player works offline once loaded**
+  — the full walkthrough is cached in `chrome.storage.local`, so refresh/return and same‑walkthrough
+  replay work with the backend down; `walkthrough.play`/`list` fall back to the cached copy / local
+  mirror when a fetch fails, and degrade to a clear error state only when there's nothing cached.
+  *Writes:* author saves are **write‑ahead** — persisted to a local per‑origin mirror first, then
+  pushed to the backend; a network failure enqueues the save in a FIFO **offline queue**
+  (`background/offline.ts`) shown as **"Sync Pending"** and drained on the `online` event / a 1‑min
+  alarm / next login, preserving order. Validation/auth errors are surfaced, not queued.
 - **Distinct error states.** The worker normalizes the backend envelope into discriminated
   `ApiError` kinds — **network / auth / validation / conflict / unknown** — and the panel branches
   on them (inline field errors vs banner vs re‑login). A 401 on any authed call pushes
@@ -179,7 +183,14 @@ binary doesn't run on Alpine/musl, our image base.)
   styles and max z‑index; the author "pick" click is swallowed with capture‑phase
   `preventDefault` + `stopImmediatePropagation` so the host page never reacts to a selection; the
   player's spotlight ring is `pointer-events:none` so real clicks still reach the page.
-- **Error boundary.** A React error boundary wraps the panel so a render error can't blank the UI.
+- **Error boundary + overlay fault isolation.** A React error boundary wraps the side‑panel app
+  (`sidepanel/main.tsx`) so a render error can't blank the UI. The on‑page **overlay is deliberately
+  vanilla DOM, not React** — keeping React out of the content script keeps the per‑page injection
+  tiny and avoids a second React runtime fighting the host page — so a *React* boundary doesn't
+  apply there. Its equivalent safety net is defensive guarding: element resolution runs through
+  `safeResolve` (try/catch → "not found", never throws onto the host), every `querySelector`/
+  `matches`/`closest` is wrapped, and a failed/missing target degrades to a non‑blocking balloon
+  rather than crashing the page.
 
 ---
 
@@ -213,14 +224,19 @@ packages/extension/src
 - **JWT in `chrome.storage.local`** (worker‑only): not encrypted at rest, but unreachable by host‑
   page JS and survives worker eviction (vs in‑memory, which forces re‑login constantly). Short TTL;
   a refresh‑token flow would be the next step.
-- **Author save is backend‑only today.** The planned **write‑ahead cache + offline FIFO queue**
-  ("Sync Pending" → drained on reconnect) for *authoring while offline* is not yet built — saving
-  surfaces a clear error if the backend is down. The *player* side of offline (cache‑first) **is**
-  implemented.
-- **Player progress is persisted by the content script** (not the worker) — content scripts share
-  `chrome.storage.local`, so resume survives worker eviction with no round‑trip. A deliberate
-  deviation from a strict "worker owns all persistence" reading, for resilience.
-- **SPA handling is retry/poll‑based**, not a long‑lived `MutationObserver` re‑resolution loop —
-  enough for late renders; an observer would react faster to heavy re‑render churn.
+- **Author offline = local‑first with an eventual‑consistency queue.** Saves are mirrored locally
+  and queued ("Sync Pending") when the backend is unreachable, then drained FIFO on reconnect. The
+  trade‑off: a queued walkthrough is usable on the authoring machine immediately but isn't the
+  backend source of truth until it syncs, and last‑write‑wins on drain (no conflict resolution).
+  Good enough for a single author; multi‑device concurrent edits would need versioning/merge.
+- **Player progress is persisted by the content script** (not the worker), in `localStorage` — it's
+  synchronous (so the step index is saved before a click‑navigation unloads the page) and survives
+  worker eviction with no round‑trip. A deliberate deviation from a strict "worker owns all
+  persistence" reading, for resilience.
+- **SPA handling combines retry/poll *and* a `MutationObserver`.** Each step resolves with fast
+  retries then a slow poll for late renders; while a step is shown a `MutationObserver` re‑anchors
+  the balloon (reposition if the element moved, full re‑resolve if it detached), and `pushState`/
+  `replaceState`/`popstate` are patched to re‑evaluate on client‑side route changes. The observer is
+  coalesced through one `requestAnimationFrame` to bound churn cost.
 - **Targeting weights are heuristic** and top‑frame only (no iframes); one active walkthrough per
   origin. Next: tune scoring on real apps, add a verify‑before‑advance check, and iframe support.
