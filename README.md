@@ -90,20 +90,33 @@ least stable:
    (`:r3:`, long hashes, leading digits) are rejected.
 2. **Text** — normalized text + accessible name + tag.
 3. **Anchor** — nearest ancestor that *has* a stable selector, plus the path from it to the target
-   (survives churn above the anchor).
-4. **Layout** — bounding rect + viewport quadrant (tie‑breaker only).
+   (survives churn above the anchor), the associated `<label>` text, and the sibling index.
+4. **Layout** — bounding rect (tie‑breaker only) + viewport quadrant (captured, not scored).
 5. **Fallback** — a brittle `nth-of-type` path + a fingerprint, used only as last resort.
 
 **Resolve (`content/targeting/resolver.ts`).** Gather candidates from each tier, score them, and
 pick the best **only if it clears a threshold *and* beats the runner‑up by a margin** — otherwise
-return `null`. Weights: **attributes ≫ text > anchor ≫ layout**. A *wrong* match is worse than no
-match, so ambiguous ties refuse to guess. The resolver is null‑safe (descriptors may be partial)
-and never throws onto the host page.
+return `null`. Weights: **attributes ≫ text > anchor ≫ layout**. Concretely, every signal the
+descriptor captures contributes: stable attrs (testid +50, id +40, selector +30, name +25,
+aria‑label +20, placeholder/href +12, role +8, type +5), text (accessible name +16, normalized
++10, tag +4), anchor (inside the stable ancestor +12, **exact path *from* it +18**, associated
+`<label>` text +12, sibling index +4), the brittle `fallbackCss` (+8) and `fingerprint` (+10), and
+layout drift (+6/+2). The two precise positional paths (`pathFromAnchor`, `fallbackCss`) are
+pre‑resolved once and act as strong tie‑breakers — they're what separates three identical
+"Book a demo" links that match attrs/text/fingerprint the same. (`layout.quadrant` is captured but
+not scored — redundant with the rect and equally scroll‑dependent.)
+
+A *wrong* match is worse than no match, so ambiguous ties refuse to guess — **with one exception**:
+when the tied candidates form a **nested chain** (a wrapper and the real target, where bubbled text
+makes both score equally), the resolver keeps the one whose box best matches the captured rect
+rather than refusing. The resolver is null‑safe (descriptors may be partial) and never throws onto
+the host page.
 
 **Trade‑offs.** More signals = more robust but heavier capture/scoring (text length capped,
-candidate count capped, layout weighted low because positions move). Stable‑attribute‑only
-selectors miss elements with no good attributes — which is exactly why the text and anchor tiers
-exist. The scoring weights are heuristic; they could be learned/tuned with real‑world data.
+candidate count capped, positional paths weighted as tie‑breakers — never overriding real
+attr/text signals — because `nth-of-type` shifts on re‑render). Stable‑attribute‑only selectors
+miss elements with no good attributes — which is exactly why the text and anchor tiers exist. The
+scoring weights are heuristic; they could be learned/tuned with real‑world data.
 
 ### SPA / re‑render resilience
 
